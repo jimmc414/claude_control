@@ -1,0 +1,8 @@
+# Core dependency
+pexpect>=4.8.0
+
+# Process management
+psutil>=5.9.0  # For zombie process cleanup
+
+# Optional but recommended
+watchdog>=2.1.0  # For efficient file monitoring

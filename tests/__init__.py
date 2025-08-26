@@ -1,0 +1,3 @@
+"""
+ClaudeControl test suite
+"""
