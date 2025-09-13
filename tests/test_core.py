@@ -7,6 +7,7 @@ import time
 import logging
 import psutil
 import pytest
+import threading
 from pathlib import Path
 
 from claudecontrol import (
@@ -337,6 +338,42 @@ class TestStreamingOutput:
         
         # Pipe should be removed
         assert not session.pipe_path.exists()
+
+
+def test_load_config_thread_safety(monkeypatch, tmp_path):
+    """Ensure _load_config initializes config only once when called from multiple threads"""
+    import claudecontrol.core as core
+
+    # Prepare temporary config file
+    home = tmp_path
+    config_dir = home / ".claude-control"
+    config_dir.mkdir()
+    (config_dir / "config.json").write_text("{}")
+
+    monkeypatch.setenv("HOME", str(home))
+
+    core._config = None
+
+    call_count = {"count": 0}
+    real_loads = core.json.loads
+
+    def counting_loads(s, *args, **kwargs):
+        time.sleep(0.1)
+        call_count["count"] += 1
+        return real_loads(s, *args, **kwargs)
+
+    monkeypatch.setattr(core.json, "loads", counting_loads)
+
+    def target():
+        core._load_config()
+
+    threads = [threading.Thread(target=target) for _ in range(10)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert call_count["count"] == 1
 
 
 if __name__ == "__main__":

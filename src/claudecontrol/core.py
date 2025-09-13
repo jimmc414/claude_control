@@ -29,6 +29,7 @@ from .patterns import COMMON_PROMPTS, COMMON_ERRORS
 _sessions: Dict[str, 'Session'] = {}
 _lock = threading.Lock()
 _config = None
+_config_lock = threading.Lock()
 
 logger = logging.getLogger(__name__)
 
@@ -43,22 +44,24 @@ def _load_config() -> dict:
     """Load configuration with smart defaults"""
     global _config
     if _config is None:
-        config_path = Path.home() / ".claude-control" / "config.json"
-        if config_path.exists():
-            try:
-                _config = json.loads(config_path.read_text())
-            except Exception:
-                _config = {}
-        else:
-            _config = {}
-        
-        # Apply defaults
-        _config.setdefault("session_timeout", 300)
-        _config.setdefault("max_sessions", 20) 
-        _config.setdefault("auto_cleanup", True)
-        _config.setdefault("log_level", "INFO")
-        _config.setdefault("output_limit", 10000)
-        
+        with _config_lock:
+            if _config is None:
+                config_path = Path.home() / ".claude-control" / "config.json"
+                if config_path.exists():
+                    try:
+                        _config = json.loads(config_path.read_text())
+                    except Exception:
+                        _config = {}
+                else:
+                    _config = {}
+
+                # Apply defaults
+                _config.setdefault("session_timeout", 300)
+                _config.setdefault("max_sessions", 20)
+                _config.setdefault("auto_cleanup", True)
+                _config.setdefault("log_level", "INFO")
+                _config.setdefault("output_limit", 10000)
+
     return _config
 
 
