@@ -5,6 +5,7 @@ Makes common tasks extremely simple
 
 import json
 import time
+import shlex
 import pexpect
 from pathlib import Path
 from typing import Optional, Union, List, Dict, Any
@@ -198,7 +199,7 @@ def ssh_command(
     else:
         ssh_cmd += f" {host}"
         
-    ssh_cmd += f" {command}"
+    ssh_cmd += f" {shlex.quote(command)}"
     
     with Session(ssh_cmd, timeout=timeout, persist=False) as session:
         # Handle SSH prompts
