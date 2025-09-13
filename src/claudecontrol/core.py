@@ -599,13 +599,18 @@ def run(
     env: Optional[Dict[str, str]] = None,
 ) -> str:
     """
-    One-liner to run a controlled command
+    One-liner to run a controlled command.
+    If the command does not finish before ``timeout`` when no ``expect`` pattern
+    is provided, the process is terminated and a :class:`TimeoutError` is
+    raised.
     
     Args:
         command: Command to run
         expect: Pattern(s) to wait for
         send: Input to send after expect
-        timeout: Operation timeout
+        timeout: Operation timeout. When no ``expect`` pattern is provided and
+            the process does not complete before this timeout, a
+            :class:`TimeoutError` is raised and the process is terminated.
         cwd: Working directory
         env: Environment variables
         
@@ -624,14 +629,18 @@ def run(
             session.send(send)
             # Wait a bit for response
             time.sleep(0.5)
-        
+
         # Wait for process to complete if no expect pattern given
         if not expect:
             try:
                 session.expect(pexpect.EOF, timeout=timeout)
-            except:
-                pass
-            
+            except TimeoutError:
+                logger.warning(
+                    f"Command '{command}' exceeded timeout of {timeout}s; terminating"
+                )
+                session.close()
+                raise
+
         # Get all output
         output = session.get_full_output()
         

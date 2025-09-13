@@ -4,6 +4,8 @@ Tests for core claudecontrol functionality
 
 import os
 import time
+import logging
+import psutil
 import pytest
 from pathlib import Path
 
@@ -174,6 +176,28 @@ class TestRunFunction:
         """Test run with timeout"""
         with pytest.raises(TimeoutError):
             run("sleep 10", timeout=1)
+
+    def test_run_timeout_logs_and_cleans(self, caplog):
+        """Ensure timeout raises warning and terminates process"""
+        with caplog.at_level(logging.WARNING):
+            with pytest.raises(TimeoutError):
+                run("sleep 10", timeout=1)
+
+        assert any("exceeded timeout" in message for message in caplog.messages)
+
+        found = False
+        for proc in psutil.process_iter(["cmdline"]):
+            try:
+                cmdline_list = proc.info["cmdline"]
+            except (psutil.AccessDenied, psutil.ZombieProcess, psutil.NoSuchProcess):
+                continue
+            if not cmdline_list:
+                continue
+            cmdline = " ".join(cmdline_list)
+            if "sleep 10" in cmdline:
+                found = True
+                break
+        assert not found
     
     def test_run_with_send(self):
         """Test run with input sending"""
