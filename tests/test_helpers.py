@@ -3,6 +3,7 @@ Tests for claudecontrol helper functions
 """
 
 import time
+import shlex
 import pytest
 from unittest.mock import patch, MagicMock
 
@@ -10,7 +11,7 @@ from claudecontrol.claude_helpers import (
     test_command, interactive_command, run_script,
     watch_process, parallel_commands, CommandChain,
     status, probe_interface, map_program_states,
-    fuzz_program
+    fuzz_program, ssh_command
 )
 
 
@@ -183,6 +184,39 @@ class TestParallelCommands:
         assert results["false"]["success"] is False
         assert results["this_does_not_exist"]["success"] is False
 
+
+class TestSSHCommand:
+    """Test the ssh_command helper"""
+
+    def test_quotes_command(self):
+        """Ensure commands with spaces are properly quoted"""
+        captured = {}
+
+        class DummySession:
+            def __init__(self, cmd, timeout=None, persist=False):
+                captured["cmd"] = cmd
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                pass
+
+            def expect(self, patterns, timeout=None):
+                return len(patterns) - 1
+
+            def sendline(self, _):
+                pass
+
+            def get_full_output(self):
+                return "output"
+
+        with patch("claudecontrol.claude_helpers.Session", DummySession):
+            result = ssh_command("localhost", 'echo "hello world"')
+
+        expected = f"ssh -p 22 localhost {shlex.quote('echo "hello world"')}"
+        assert captured["cmd"] == expected
+        assert result == "output"
 
 class TestCommandChain:
     """Test CommandChain class"""
