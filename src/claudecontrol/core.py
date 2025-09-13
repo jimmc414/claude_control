@@ -710,25 +710,23 @@ def cleanup_sessions(force: bool = False, max_age_minutes: int = 60) -> int:
     
     cleaned = 0
     cutoff_time = datetime.now() - timedelta(minutes=max_age_minutes)
-    
+
+    # Collect sessions to clean while holding the lock
     with _lock:
-        to_clean = []
-        
-        for sid, session in _sessions.items():
-            should_clean = (
-                force or
-                not session.is_alive() or
-                session.last_activity < cutoff_time
+        sessions_to_clean = [
+            session
+            for session in _sessions.values()
+            if (
+                force
+                or not session.is_alive()
+                or session.last_activity < cutoff_time
             )
-            
-            if should_clean:
-                to_clean.append(sid)
-                
-        for sid in to_clean:
-            session = _sessions.get(sid)
-            if session:
-                session.close()
-                cleaned += 1
+        ]
+
+    # Close sessions outside of the lock to avoid deadlocks
+    for session in sessions_to_clean:
+        session.close()
+        cleaned += 1
                 
     logger.info(f"Cleaned up {cleaned} sessions")
     return cleaned
