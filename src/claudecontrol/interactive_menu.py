@@ -478,11 +478,12 @@ class InteractiveMenu:
         
         try:
             if expected:
-                result = test_command(command, expected, timeout=10)
-                if result:
+                success, error = test_command(command, expected, timeout=10)
+                if success:
                     print("✓ TEST PASSED - Found expected output")
                 else:
-                    print("✗ TEST FAILED - Expected output not found")
+                    message = error or "Expected output not found"
+                    print(f"✗ TEST FAILED - {message}")
             else:
                 from .core import run
                 output = run(command, timeout=10)
