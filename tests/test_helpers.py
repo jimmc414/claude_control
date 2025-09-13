@@ -20,31 +20,35 @@ class TestTestCommand:
     
     def test_simple_success(self):
         """Test command with expected output"""
-        result = test_command("echo 'hello world'", "hello")
-        assert result is True
+        success, error = test_command("echo 'hello world'", "hello")
+        assert success is True
+        assert error is None
     
     def test_simple_failure(self):
         """Test command without expected output"""
-        result = test_command("echo 'hello'", "goodbye")
-        assert result is False
+        success, _ = test_command("echo 'hello'", "goodbye")
+        assert success is False
     
     def test_multiple_patterns(self):
         """Test with multiple expected patterns"""
-        result = test_command("echo 'hello world'", ["hello", "world"])
-        assert result is True
-        
-        result = test_command("echo 'hello'", ["hello", "goodbye"])
-        assert result is False
+        success, error = test_command("echo 'hello world'", ["hello", "world"])
+        assert success is True
+        assert error is None
+
+        success, _ = test_command("echo 'hello'", ["hello", "goodbye"])
+        assert success is False
     
     def test_command_failure(self):
         """Test with failing command"""
-        result = test_command("false", "anything")
-        assert result is False
+        success, err = test_command("false", "anything")
+        assert success is False
+        assert err
     
     def test_with_timeout(self):
         """Test with timeout"""
-        result = test_command("sleep 10", "done", timeout=1)
-        assert result is False
+        success, err = test_command("sleep 10", "done", timeout=1)
+        assert success is False
+        assert err
 
 
 class TestInteractiveCommand:

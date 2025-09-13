@@ -193,12 +193,12 @@
 
 ## Helper Function Interfaces
 
-### `test_command(command: str, expected_output: Union[str, List[str]], timeout: int = 30, cwd: Optional[str] = None) -> bool`
+### `test_command(command: str, expected_output: Union[str, List[str]], timeout: int = 30, cwd: Optional[str] = None) -> Tuple[bool, Optional[str]]`
 **Purpose:** Test if a command produces expected output
 **Location:** `src/claudecontrol/claude_helpers.py`
 
-**Returns:** True if all expected outputs found, False otherwise
-**Error Handling:** Returns False on any exception
+**Returns:** Tuple of `(success, error_message)` where `error_message` is `None` when all expected outputs are found
+**Error Handling:** Returns `(False, str(e))` on any exception
 
 ### `interactive_command(command: str, interactions: List[Dict[str, str]], timeout: int = 30, cwd: Optional[str] = None) -> str`
 **Purpose:** Run command with scripted interactions

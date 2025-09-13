@@ -141,8 +141,11 @@ with Session("database_cli") as session:
 from claudecontrol.claude_helpers import test_command, parallel_commands
 
 # Test if command works
-if test_command("npm test", expected_output="passing"):
+success, error = test_command("npm test", expected_output="passing")
+if success:
     print("Tests passed!")
+else:
+    print(f"Tests failed: {error}")
 
 # Run multiple commands in parallel
 results = parallel_commands([
@@ -274,8 +277,11 @@ match = session.wait_for_regex(r"\d+")       # Regex with match object
 ```python
 from claudecontrol.claude_helpers import test_command
 
-if test_command("npm test", ["✓", "passing"]):
+success, error = test_command("npm test", ["✓", "passing"])
+if success:
     print("All tests passed!")
+else:
+    print(f"Tests failed: {error}")
 ```
 
 ### Interactive Sessions

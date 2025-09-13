@@ -336,7 +336,7 @@ graph LR
 
 ### Example 1: Interactive Command
 ```
-test_command("npm test", "passing")
+success, error = test_command("npm test", "passing")
   └── run("npm test", expect="passing")
       └── Session.__init__("npm test")
           └── pexpect.spawn("npm test")

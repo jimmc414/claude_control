@@ -8,7 +8,7 @@ import time
 import shlex
 import pexpect
 from pathlib import Path
-from typing import Optional, Union, List, Dict, Any
+from typing import Optional, Union, List, Dict, Any, Tuple
 
 from .core import control, run, get_session, list_sessions, Session
 from .patterns import wait_for_prompt, extract_json, COMMON_PROMPTS
@@ -20,37 +20,45 @@ def test_command(
     expected_output: Union[str, List[str]],
     timeout: int = 30,
     cwd: Optional[str] = None,
-) -> bool:
+) -> Tuple[bool, Optional[str]]:
     """
     Test if a command produces expected output
-    
+
     Args:
         command: Command to run
         expected_output: String or list of strings to look for
         timeout: Maximum wait time
         cwd: Working directory
-        
+
     Returns:
-        True if all expected outputs were found
-        
+        Tuple of (success, error message). ``error`` will be ``None`` when the
+        command executed and all expected outputs were found.
+
     Example:
-        if test_command("npm test", ["✓", "passing"]):
+        success, error = test_command("npm test", ["✓", "passing"])
+        if success:
             print("Tests passed!")
+        else:
+            print(f"Tests failed: {error}")
     """
     try:
         output = run(command, timeout=timeout, cwd=cwd)
-        
+
         if isinstance(expected_output, str):
             expected_output = [expected_output]
-            
+
         for expected in expected_output:
             if expected not in output:
-                return False
-                
-        return True
-        
-    except Exception:
-        return False
+                return False, f"Expected output '{expected}' not found"
+
+        return True, None
+
+    except Exception as e:
+        return False, str(e)
+
+
+# Prevent pytest from collecting this helper as a test
+test_command.__test__ = False
 
 
 def interactive_command(

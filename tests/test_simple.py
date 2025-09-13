@@ -42,9 +42,12 @@ class TestBasicFunctionality:
     def test_test_command(self):
         """Test the test_command helper"""
         # Test with true command
-        assert test_command("echo 'success'", "success") is True
+        success, error = test_command("echo 'success'", "success")
+        assert success is True
+        assert error is None
         # Test with false expectation
-        assert test_command("echo 'hello'", "goodbye") is False
+        success, _ = test_command("echo 'hello'", "goodbye")
+        assert success is False
     
     def test_session_lifecycle(self):
         """Test session creation and cleanup"""
