@@ -26,31 +26,40 @@ from .claude_helpers import status, parallel_commands
 
 def cmd_run(args):
     """Run a single command"""
-    session = control(args.command, timeout=args.timeout, cwd=args.cwd)
-    
-    if args.expect:
-        session.expect(args.expect, timeout=args.timeout)
-        
-    if args.send:
-        session.sendline(args.send)
-        
-    if args.wait:
-        # Wait for process to complete
-        start = time.time()
-        while session.is_alive() and (time.time() - start) < args.timeout:
-            time.sleep(0.1)
-            
-    output = session.get_full_output()
-    
-    if args.output:
-        Path(args.output).write_text(output)
-        print(f"Output saved to {args.output}")
-    else:
-        print(output)
-        
-    if not args.keep_alive:
-        session.close()
-        
+    session = None
+
+    try:
+        session = control(args.command, timeout=args.timeout, cwd=args.cwd)
+
+        if args.expect:
+            session.expect(args.expect, timeout=args.timeout)
+
+        if args.send:
+            session.sendline(args.send)
+
+        if args.wait:
+            # Wait for process to complete
+            start = time.time()
+            while session.is_alive() and (time.time() - start) < args.timeout:
+                time.sleep(0.1)
+
+        output = session.get_full_output()
+
+        if args.output:
+            Path(args.output).write_text(output)
+            print(f"Output saved to {args.output}")
+        else:
+            print(output)
+    except Exception as exc:
+        print(f"Error: {exc}")
+        return 1
+    finally:
+        if session and not args.keep_alive:
+            try:
+                session.close()
+            except Exception as close_error:
+                logging.error(f"Failed to close session: {close_error}")
+
     return 0
 
 
