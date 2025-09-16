@@ -12,7 +12,7 @@ from typing import Optional, Dict, Any, List
 from .core import control, list_sessions, get_session, cleanup_sessions
 from .claude_helpers import (
     test_command,
-    investigate_program,
+    investigation_summary,
     probe_interface,
     fuzz_program,
     status,
@@ -174,7 +174,7 @@ class InteractiveMenu:
         print("This may take a moment...\n")
         
         try:
-            result = investigate_program(
+            result = investigation_summary(
                 program=program,
                 timeout=10,
                 safe_mode=safe_mode,
@@ -777,7 +777,7 @@ Python API:
       calc.sendline("2+2")
 
 Investigation API:
-  from claudecontrol.investigate import investigate_program
+  from claudecontrol import investigate_program
   
   report = investigate_program("unknown_tool")
   print(report.summary())

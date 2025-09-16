@@ -33,13 +33,14 @@ from .claude_helpers import (
     interactive_command,
     run_script,
     status,
-    investigate_program,
+    investigation_summary,
     probe_interface,
     map_program_states,
     fuzz_program,
 )
 
 from .investigate import (
+    investigate_program,
     ProgramInvestigator,
     InvestigationReport,
 )
@@ -73,6 +74,7 @@ __all__ = [
     "run_script",
     "status",
     "investigate_program",
+    "investigation_summary",
     "probe_interface",
     "map_program_states",
     "fuzz_program",

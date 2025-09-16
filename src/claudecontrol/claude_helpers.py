@@ -438,37 +438,37 @@ class CommandChain:
 
 
 # Investigation helpers
-def investigate_program(
+def investigation_summary(
     program: str,
     timeout: int = 10,
     safe_mode: bool = True,
     interactive: bool = False,
 ) -> Dict[str, Any]:
     """
-    Investigate an unknown program
-    
+    Generate a summarized view of an unknown program
+
     Args:
         program: Program to investigate
         timeout: Operation timeout
         safe_mode: Enable safety checks
         interactive: Use interactive learning mode
-        
+
     Returns:
         Investigation results dict
     """
     from .investigate import ProgramInvestigator
-    
+
     investigator = ProgramInvestigator(
         program=program,
         timeout=timeout,
         safe_mode=safe_mode,
     )
-    
+
     if interactive:
         report = investigator.learn_from_interaction()
     else:
         report = investigator.investigate()
-    
+
     return {
         "program": report.program,
         "prompts": report.prompts,
