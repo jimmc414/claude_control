@@ -167,7 +167,7 @@ graph TD
 - **Test Suites**: Startup, help system, invalid input, exit behavior, resources, concurrency, fuzzing
 
 ### Helper Functions
-- **claude_helpers.py**: High-level functions like test_command, probe_interface, investigate_program
+- **claude_helpers.py**: High-level functions like test_command, probe_interface, investigation_summary
 - **CommandChain**: Sequential command execution with conditions
 - **parallel_commands**: Run multiple commands concurrently
 - **watch_process**: Monitor processes for specific patterns

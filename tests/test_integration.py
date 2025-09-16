@@ -11,11 +11,11 @@ from pathlib import Path
 
 from claudecontrol import (
     Session, run, control, cleanup_sessions,
-    list_sessions, get_session
+    list_sessions, get_session, investigate_program
 )
 from claudecontrol.claude_helpers import (
     test_command, parallel_commands, CommandChain,
-    investigate_program, status
+    status
 )
 from claudecontrol.patterns import (
     extract_json, detect_prompt_pattern, classify_output

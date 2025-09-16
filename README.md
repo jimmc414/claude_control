@@ -181,7 +181,7 @@ ClaudeControl excels at exploring and understanding unknown CLI programs:
 ### Automatic Investigation
 
 ```python
-from claudecontrol.investigate import investigate_program
+from claudecontrol import investigate_program
 
 # Fully automated investigation
 report = investigate_program("unknown_app")

@@ -7,6 +7,7 @@ import pytest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
+from claudecontrol import investigation_summary
 from claudecontrol.investigate import (
     ProgramInvestigator, InvestigationReport,
     ProgramState, investigate_program, load_investigation
@@ -225,9 +226,9 @@ class TestProgramInvestigator:
 
 class TestInvestigationHelpers:
     """Test investigation helper functions"""
-    
+
     def test_investigate_program_function(self):
-        """Test the investigate_program helper"""
+        """Test the investigate_program function"""
         report = investigate_program(
             "python --version",
             timeout=2,
@@ -258,6 +259,18 @@ class TestInvestigationHelpers:
         reports_dir = temp_dir / ".claude-control" / "investigations"
         assert reports_dir.exists()
         assert len(list(reports_dir.glob("*.json"))) > 0
+
+    def test_investigation_summary_helper(self):
+        """Test the investigation_summary convenience helper"""
+        summary = investigation_summary(
+            "echo 'summary'",
+            timeout=2,
+            safe_mode=True,
+        )
+
+        assert summary["program"] == "echo 'summary'"
+        assert "commands" in summary
+        assert "summary" in summary
 
 
 class TestInteractiveLearning:
