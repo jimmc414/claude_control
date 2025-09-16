@@ -94,6 +94,9 @@ class Session:
         config = _load_config()
         self.output_buffer = deque(maxlen=config["output_limit"])
         self.full_output = []
+
+        # Track expect/response history for configuration generation
+        self.expect_history: List[Dict[str, Any]] = []
         
         # Add resource management
         self.start_time = time.time()
@@ -218,6 +221,7 @@ class Session:
                 searchwindowsize=searchwindowsize,
             )
             self.last_activity = datetime.now()
+            self._record_expectation("expect", patterns, index)
             return index
             
         except pexpect.TIMEOUT:
@@ -229,7 +233,7 @@ class Session:
             )
         except pexpect.EOF:
             raise ProcessError(f"Process ended unexpectedly")
-    
+
     def expect_exact(
         self,
         patterns: Union[str, List[str]],
@@ -244,14 +248,53 @@ class Session:
         try:
             index = self.process.expect_exact(patterns, timeout=timeout)
             self.last_activity = datetime.now()
+            self._record_expectation("expect_exact", patterns, index)
             return index
         except pexpect.TIMEOUT:
             recent = self.get_recent_output(50)
             raise TimeoutError(
-                f"Timeout waiting for exact patterns {patterns}\n" 
+                f"Timeout waiting for exact patterns {patterns}\n"
                 f"Recent output:\n{recent}"
             )
-    
+
+    def _record_expectation(self, expect_type: str, patterns: List[Any], matched_index: int) -> None:
+        """Store successful expect calls for later analysis"""
+        pattern_list = list(patterns) if isinstance(patterns, (list, tuple)) else [patterns]
+        normalized_patterns = [self._pattern_to_str(pattern) for pattern in pattern_list]
+
+        matched_pattern = None
+        if 0 <= matched_index < len(normalized_patterns):
+            matched_pattern = normalized_patterns[matched_index]
+
+        history_entry: Dict[str, Any] = {
+            "timestamp": datetime.now().isoformat(),
+            "type": expect_type,
+            "patterns": normalized_patterns,
+            "matched_index": matched_index,
+            "matched_pattern": matched_pattern,
+        }
+
+        if hasattr(self.process, "before"):
+            history_entry["before"] = self.process.before
+        if hasattr(self.process, "after"):
+            history_entry["after"] = self.process.after
+
+        self.expect_history.append(history_entry)
+
+    @staticmethod
+    def _pattern_to_str(pattern: Any) -> str:
+        """Convert pattern or regex to a readable string"""
+        if pattern is None:
+            return ""
+
+        if isinstance(pattern, str):
+            return pattern
+
+        if hasattr(pattern, "pattern"):
+            return pattern.pattern
+
+        return str(pattern)
+
     def read_until(
         self,
         pattern: str,
@@ -372,20 +415,50 @@ class Session:
     
     def save_program_config(self, name: str, include_output: bool = False) -> None:
         """Save current session as a program configuration
-        
+
         Args:
             name: Name for the configuration
             include_output: Whether to include captured output (default False)
         """
         # Extract interaction patterns from session
         expect_sequences = []
-        
+
         # Analyze the process interaction history if available
-        if hasattr(self.process, 'match_index') and self.process.match_index is not None:
-            # We can extract patterns that were successfully matched
-            # This is a simplified approach - in practice you might track expects
-            pass
+        if not getattr(self, "expect_history", None):
+            logger.warning(
+                "No expect history recorded for session %s. "
+                "Saved configuration will have an empty expect_sequences list.",
+                self.session_id,
+            )
+        else:
+            step = 1
+            for entry in self.expect_history:
+                matched_pattern = entry.get("matched_pattern")
+                if matched_pattern is None:
+                    continue
+
+                sequence = {
+                    "step": step,
+                    "expect": matched_pattern,
+                }
+
+                patterns = entry.get("patterns") or []
+                matched_index = entry.get("matched_index")
+                if len(patterns) > 1 and matched_index is not None:
+                    readable_patterns = ", ".join(patterns)
+                    sequence["note"] = (
+                        f"Matched option {matched_index + 1} from patterns: {readable_patterns}"
+                    )
+
+                expect_sequences.append(sequence)
+                step += 1
         
+        notes = [
+            f"Saved from session {self.session_id} on {datetime.now().isoformat()}"
+        ]
+        if not expect_sequences:
+            notes.append("No expect history was recorded during this session.")
+
         config = {
             "name": name,
             "command_template": self.command,
@@ -393,7 +466,7 @@ class Session:
             "success_indicators": [],
             "ready_indicators": [],
             "typical_timeout": self.timeout,
-            "notes": f"Saved from session {self.session_id} on {datetime.now().isoformat()}"
+            "notes": " ".join(notes),
         }
         
         if include_output:
