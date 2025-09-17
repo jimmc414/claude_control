@@ -525,7 +525,23 @@ def main():
         logging.basicConfig(level=logging.DEBUG)
     else:
         config = _load_config()
-        level = getattr(logging, config.get("log_level", "INFO"))
+        level_name = config.get("log_level", "INFO")
+        level = getattr(logging, level_name, logging.INFO)
+        unknown_level = False
+
+        if not isinstance(level, int):
+            unknown_level = True
+        elif level_name != "INFO" and not hasattr(logging, level_name):
+            unknown_level = True
+
+        if unknown_level:
+            if level_name != "INFO":
+                logging.warning(
+                    "Unknown log level '%s' in configuration. Falling back to INFO.",
+                    level_name,
+                )
+            level = logging.INFO
+
         logging.basicConfig(level=level)
         
     # Run command
