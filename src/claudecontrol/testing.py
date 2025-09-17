@@ -209,28 +209,29 @@ class BlackBoxTester:
             "details": {}
         }
         
+        session = None
         try:
             import psutil
-            
+
             # Start process
             session = control(self.program, timeout=self.timeout, reuse=False)
             time.sleep(1)
-            
+
             if session.process and session.process.pid:
                 proc = psutil.Process(session.process.pid)
-                
+
                 # Check initial resource usage
                 result["details"]["cpu_percent"] = proc.cpu_percent(interval=1)
                 result["details"]["memory_mb"] = proc.memory_info().rss / 1024 / 1024
                 result["details"]["num_threads"] = proc.num_threads()
-                
+
                 # Send some activity
                 session.sendline("help")
                 time.sleep(1)
-                
+
                 # Check again
                 result["details"]["cpu_after_activity"] = proc.cpu_percent(interval=1)
-                
+
                 # Check for excessive resource usage
                 if result["details"]["memory_mb"] > 500:
                     result["passed"] = False
@@ -238,15 +239,19 @@ class BlackBoxTester:
                 elif result["details"]["cpu_percent"] > 80:
                     result["passed"] = False
                     result["details"]["issue"] = "High CPU usage"
-                    
-            session.close()
-            
+
         except ImportError:
             result["details"]["note"] = "psutil not available"
         except Exception as e:
             result["error"] = str(e)
             result["passed"] = False
-            
+        finally:
+            if session is not None:
+                try:
+                    session.close()
+                except Exception:
+                    pass
+
         self.test_results.append(result)
         return result
     
