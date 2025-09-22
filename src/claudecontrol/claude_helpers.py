@@ -141,24 +141,45 @@ def run_script(
             script_path = f.name
             
         # Run the script
+        start_time = time.time()
+        timed_out = False
+
         with Session(
             f"{interpreter} {script_path}",
             timeout=timeout,
             cwd=cwd,
             persist=False,
         ) as session:
-            # Wait for completion
-            start_time = time.time()
-            while session.is_alive() and (time.time() - start_time) < timeout:
-                time.sleep(0.1)
-                
-            output = session.get_full_output()
-            exitstatus = session.exitstatus()
-            
-            if session.is_alive():
+            try:
+                elapsed = time.time() - start_time
+                remaining = timeout - elapsed if timeout is not None else None
+
+                if remaining is not None:
+                    if remaining <= 0:
+                        raise TimeoutError("Script execution timed out")
+                    session.expect(pexpect.EOF, timeout=remaining)
+                else:
+                    session.expect(pexpect.EOF)
+
+                if session.exitstatus() is None and getattr(session, "process", None):
+                    try:
+                        session.process.wait()
+                    except (pexpect.exceptions.ExceptionPexpect, OSError):
+                        pass
+
+            except TimeoutError:
+                timed_out = True
                 session.close(force=True)
-                exitstatus = -1
-                
+
+            if not timed_out and session.is_alive():
+                session.close(force=True)
+
+        output = session.get_full_output()
+        exitstatus = session.exitstatus()
+
+        if timed_out or exitstatus is None:
+            exitstatus = -1
+
         return {
             "output": output,
             "exitstatus": exitstatus,
