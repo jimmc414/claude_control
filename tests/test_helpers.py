@@ -193,10 +193,12 @@ class TestParallelCommands:
         ]
         
         results = parallel_commands(commands, timeout=5)
-        
+
         assert results["echo 'success'"]["success"] is True
         assert results["false"]["success"] is False
         assert results["this_does_not_exist"]["success"] is False
+        assert "false" in results["false"]["error"]
+        assert results["this_does_not_exist"]["error"]
 
 
 class TestSSHCommand:
@@ -266,6 +268,7 @@ class TestCommandChain:
         assert results[0]["success"] is True  # echo always
         assert results[1]["success"] is False  # false
         assert results[2]["success"] is True  # echo on_failure
+        assert "false" in results[1]["error"]
     
     def test_chain_with_condition(self):
         """Test chain with custom condition"""
