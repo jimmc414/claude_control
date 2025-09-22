@@ -46,7 +46,7 @@ class ProgramState:
 class InvestigationReport:
     """Complete investigation findings"""
     program: str
-    started_at: datetime
+    started_at: datetime = field(default_factory=datetime.now)
     completed_at: Optional[datetime] = None
     entry_state: Optional[ProgramState] = None
     states: Dict[str, ProgramState] = field(default_factory=dict)
