@@ -697,10 +697,13 @@ def run(
         output = run("npm test", expect="All tests passed")
     """
     with Session(command, timeout=timeout, cwd=cwd, env=env, persist=False) as session:
-        
+
+        exit_status = None
+        signal_status = None
+
         if expect:
             session.expect(expect, timeout=timeout)
-            
+
         if send:
             session.send(send)
             # Wait a bit for response
@@ -710,6 +713,17 @@ def run(
         if not expect:
             try:
                 session.expect(pexpect.EOF, timeout=timeout)
+                exit_status = session.exitstatus()
+                if session.process is not None:
+                    signal_status = session.process.signalstatus
+                    if exit_status is None:
+                        try:
+                            session.process.wait()
+                        except (pexpect.exceptions.ExceptionPexpect, OSError):
+                            pass
+                        else:
+                            exit_status = session.exitstatus()
+                            signal_status = session.process.signalstatus
             except TimeoutError:
                 logger.warning(
                     f"Command '{command}' exceeded timeout of {timeout}s; terminating"
@@ -719,11 +733,22 @@ def run(
 
         # Get all output
         output = session.get_full_output()
-        
+
+        if exit_status not in (None, 0) or signal_status not in (None, 0):
+            status_parts = []
+            if exit_status not in (None, 0):
+                status_parts.append(f"exit status {exit_status}")
+            if signal_status not in (None, 0):
+                status_parts.append(f"signal {signal_status}")
+            status_desc = " and ".join(status_parts) if status_parts else "an unknown error"
+            raise ProcessError(
+                f"Command '{command}' failed with {status_desc}.\nOutput:\n{output}"
+            )
+
         # If process is still running, terminate it
         if session.is_alive():
             session.close()
-            
+
     return output
 
 

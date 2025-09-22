@@ -9,7 +9,7 @@ from pathlib import Path
 
 from claudecontrol import (
     Session, run, control, cleanup_sessions,
-    SessionError, TimeoutError
+    SessionError, TimeoutError, ProcessError
 )
 from claudecontrol.patterns import (
     extract_json, detect_prompt_pattern, is_error_output,
@@ -139,11 +139,9 @@ class TestQuickCommands:
         """Test true and false commands"""
         # true should succeed
         output = run("true")
-        # false will exit with non-zero but shouldn't crash
-        try:
-            output = run("false")
-        except:
-            pass  # Expected to fail
+        # false will exit with non-zero and should raise an error
+        with pytest.raises(ProcessError):
+            run("false")
     
     def test_echo_multiple(self):
         """Test multiple echo commands"""

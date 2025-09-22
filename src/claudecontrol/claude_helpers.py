@@ -416,15 +416,16 @@ class CommandChain:
         """Execute the command chain"""
         results = []
         last_success = True
+        had_failure = False
         
         for cmd_info in self.commands:
             # Check conditions
             if cmd_info["condition"] and not cmd_info["condition"](results):
                 continue
                 
-            if cmd_info["on_success"] and not last_success:
+            if cmd_info["on_success"] and (not last_success or had_failure):
                 continue
-                
+
             if cmd_info["on_failure"] and last_success:
                 continue
                 
@@ -454,9 +455,13 @@ class CommandChain:
                     "error": str(e),
                 }
                 last_success = False
-                
+                had_failure = True
+
             results.append(result)
-            
+
+            if not result["success"]:
+                had_failure = True
+
         return results
 
 

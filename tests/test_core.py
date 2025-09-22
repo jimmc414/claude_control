@@ -205,6 +205,15 @@ class TestRunFunction:
         output = run("python", expect=">>>", send="print('sent')\nexit()", timeout=5)
         assert "sent" in output or ">>>" in output  # May capture prompt or output
 
+    def test_run_failure_raises_process_error(self):
+        """Failing commands should raise ProcessError with output"""
+        with pytest.raises(ProcessError) as exc_info:
+            run("bash -c 'echo fail; exit 3'", timeout=5)
+
+        message = str(exc_info.value)
+        assert "exit status 3" in message
+        assert "fail" in message
+
 
 class TestControl:
     """Test the control() function"""
