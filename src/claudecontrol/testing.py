@@ -31,11 +31,14 @@ class BlackBoxTester:
     def __init__(self, program: str, timeout: int = 10):
         """
         Initialize black box tester
-        
+
         Args:
             program: Program to test
             timeout: Default timeout for operations
         """
+        if not program or not str(program).strip():
+            raise ValueError("program must be a non-empty string")
+
         self.program = program
         self.timeout = timeout
         self.test_results = []
@@ -415,6 +418,9 @@ def black_box_test(
     Returns:
         Test results dictionary
     """
+    if not program or not str(program).strip():
+        raise ValueError("program must be a non-empty string")
+
     tester = BlackBoxTester(program, timeout=timeout)
     tester.run_all_tests()
     

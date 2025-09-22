@@ -193,21 +193,26 @@ class TestBlackBoxTestFunction:
         # Patch home directory
         def mock_home():
             return temp_dir
-        
+
         monkeypatch.setattr(Path, "home", mock_home)
-        
+
         results = black_box_test(
             "echo 'test'",
             timeout=2,
             save_report=True
         )
-        
+
         assert "report_path" in results
         assert results["report_path"] is not None
-        
+
         # Check file was created
         report_path = Path(results["report_path"])
         assert report_path.exists()
+
+    def test_black_box_test_empty_program(self):
+        """black_box_test should validate program input"""
+        with pytest.raises(ValueError):
+            black_box_test("   ")
 
 
 class TestSpecificScenarios:
@@ -263,9 +268,8 @@ class TestEdgeCases:
     
     def test_empty_program(self):
         """Test with empty program string"""
-        with pytest.raises(Exception):
-            tester = BlackBoxTester("", timeout=2)
-            tester.test_startup()
+        with pytest.raises(ValueError):
+            BlackBoxTester("", timeout=2)
     
     def test_very_short_timeout(self):
         """Test with very short timeout"""
