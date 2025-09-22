@@ -141,18 +141,28 @@ class TestWatchProcess:
     def test_watch_with_callback(self):
         """Test watch with callback function"""
         callback_data = []
-        
+
         def callback(session, pattern):
             callback_data.append(pattern)
-        
+
         watch_process(
             "echo 'Error: test'",
             "Error:",
             callback=callback,
             timeout=2
         )
-        
+
         assert len(callback_data) > 0
+
+    def test_short_lived_command_returns_cleanly(self):
+        """Ensure short-lived commands don't raise errors"""
+        matches = watch_process(
+            "echo 'done'",
+            "nonexistent pattern",
+            timeout=2
+        )
+
+        assert matches == []
 
 
 class TestParallelCommands:

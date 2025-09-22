@@ -12,7 +12,7 @@ from typing import Optional, Union, List, Dict, Any, Tuple
 
 from .core import control, run, get_session, list_sessions, Session
 from .patterns import wait_for_prompt, extract_json, COMMON_PROMPTS
-from .exceptions import SessionError, TimeoutError
+from .exceptions import SessionError, TimeoutError, ProcessError
 
 
 def test_command(
@@ -301,10 +301,12 @@ def watch_process(
                 index = session.expect(watch_for, timeout=5)
                 matched = watch_for[index]
                 matches.append(matched)
-                
+
                 if callback:
                     callback(session, matched)
-                    
+
+            except ProcessError:
+                break
             except TimeoutError:
                 # No match in this interval, keep watching
                 if not session.is_alive():
