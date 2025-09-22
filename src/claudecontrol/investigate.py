@@ -282,8 +282,17 @@ class ProgramInvestigator:
         # Check common prompts first
         for prompt_type, patterns in COMMON_PROMPTS.items():
             for pattern in patterns:
-                if re.search(pattern, output):
-                    return pattern
+                last_valid_match = None
+                for match in re.finditer(pattern, output):
+                    start = match.start()
+                    if start == 0 or output[start - 1] in "\n\r":
+                        last_valid_match = match
+
+                if last_valid_match:
+                    matched_text = last_valid_match.group(0)
+                    if matched_text:
+                        stripped = matched_text.strip()
+                        return stripped or matched_text
         
         # Look for patterns at end of output
         lines = output.strip().split('\n')
