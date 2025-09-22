@@ -758,12 +758,13 @@ def get_session(session_id: str) -> Optional[Session]:
         return _sessions.get(session_id)
 
 
-def list_sessions(active_only: bool = True) -> List[Dict[str, Any]]:
+def list_sessions(active_only: bool = False) -> List[Dict[str, Any]]:
     """
     List all sessions
-    
+
     Args:
-        active_only: If True, only return alive sessions
+        active_only: If True, only return alive sessions. Defaults to False so
+            completed sessions remain visible until cleanup.
         
     Returns:
         List of session info dicts

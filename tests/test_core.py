@@ -258,22 +258,56 @@ class TestCleanup:
         # Create a session that will die
         session = control("echo 'test'", session_id="dead_session")
         time.sleep(0.5)
-        
+
         # Session should be dead
         assert not session.is_alive()
-        
+
         # Cleanup should remove it
         cleaned = cleanup_sessions()
         assert cleaned >= 0
-        
+
         # Should not be in registry
         assert get_session("dead_session") is None
-    
+
+    def test_completed_session_visible_until_cleanup(self):
+        """Completed sessions should remain listed until explicitly cleaned up"""
+        # Ensure we start from a clean slate
+        cleanup_sessions(force=True)
+
+        session_id = "completed_visibility_test"
+        session = control(
+            "python -c 'print(\"done\")'",
+            session_id=session_id,
+            reuse=False,
+        )
+
+        try:
+            # Wait for the command to finish so the session is no longer alive
+            session.expect("done", timeout=5)
+            for _ in range(50):
+                if not session.is_alive():
+                    break
+                time.sleep(0.1)
+
+            assert not session.is_alive()
+
+            # Default listing should still include completed sessions
+            all_sessions = list_sessions()
+            assert any(s["session_id"] == session_id for s in all_sessions)
+
+            # Requesting only active sessions should filter it out
+            active_sessions = list_sessions(active_only=True)
+            assert all(
+                s["session_id"] != session_id for s in active_sessions
+            )
+        finally:
+            cleanup_sessions(force=True)
+
     def test_cleanup_old_sessions(self):
         """Test cleanup of old sessions"""
         # Create a session
         session = control("python", session_id="old_session")
-        
+
         # Manipulate last_activity to make it old
         session.last_activity = session.last_activity.replace(year=2020)
         
