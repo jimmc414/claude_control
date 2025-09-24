@@ -34,6 +34,7 @@ from .replay.play import ReplayTransport
 from .replay.summary import print_summary
 from .replay.exceptions import TapeMissError
 from .replay.matchers import MatchingContext, default_command_matcher, default_stdin_matcher
+from .replay.decorators import InputDecorator, OutputDecorator, TapeDecorator
 
 # Global session registry for persistence across calls
 _sessions: Dict[str, 'Session'] = {}
@@ -102,6 +103,9 @@ class Session:
         ignore_env: Optional[List[str]] = None,
         stdin_matcher: Optional[Callable] = None,
         command_matcher: Optional[Callable] = None,
+        input_decorator: Optional[InputDecorator] = None,
+        output_decorator: Optional[OutputDecorator] = None,
+        tape_decorator: Optional[TapeDecorator] = None,
         latency: Union[int, tuple, Callable] = 0,
         error_rate: Union[int, Callable] = 0,
     ):
@@ -135,6 +139,9 @@ class Session:
             self._stdin_matcher,
             self._command_matcher,
         )
+        self._input_decorator = input_decorator
+        self._output_decorator = output_decorator
+        self._tape_decorator = tape_decorator
         self._recorder: Optional[Recorder] = None
         self._using_replay = False
         self._summary_printed = False
@@ -221,6 +228,9 @@ class Session:
                 tapes_path=self._tapes_path,
                 mode=self._record_mode,
                 namegen=self._tape_name_generator,
+                input_decorator=self._input_decorator,
+                output_decorator=self._output_decorator,
+                tape_decorator=self._tape_decorator,
             )
             self._recorder.start()
 

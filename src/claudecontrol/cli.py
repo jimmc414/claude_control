@@ -24,6 +24,7 @@ from .core import (
 )
 from .claude_helpers import status, parallel_commands
 from .replay.modes import RecordMode, FallbackMode
+from .replay.store import TapeStore
 
 
 _RECORD_CHOICES = {
@@ -93,6 +94,75 @@ def cmd_play(args):
 
 def cmd_proxy(args):
     return _run_replay_command(args, record_default=args.record, fallback_default="proxy")
+
+
+def cmd_tapes_list(args):
+    store = TapeStore(Path(args.tapes))
+    pairs = store.iter_tapes()
+    if not pairs:
+        print("No tapes found.")
+        return 0
+
+    if args.used and args.unused:
+        print("Cannot combine --used and --unused filters.")
+        return 1
+
+    used_paths = set(store.used)
+    unused_paths = {path for path, _ in pairs if path not in used_paths}
+
+    if args.used and not used_paths:
+        print("No usage information available yet. Run a session with summary enabled first.")
+        return 0
+
+    filtered = []
+    for path, tape in pairs:
+        if args.used and path not in used_paths:
+            continue
+        if args.unused and path not in unused_paths:
+            continue
+        filtered.append((path, tape))
+
+    if not filtered:
+        print("No tapes matched the requested filters.")
+        return 0
+
+    for path, tape in filtered:
+        exchange_count = len(tape.exchanges)
+        print(f"{path}: {exchange_count} exchange{'s' if exchange_count != 1 else ''}")
+    return 0
+
+
+def cmd_tapes_validate(args):
+    store = TapeStore(Path(args.tapes))
+    errors = store.validate(strict=args.strict)
+    if not errors:
+        print("All tapes passed validation.")
+        return 0
+
+    print("Validation errors detected:")
+    for path, message in errors:
+        print(f"- {path}: {message}")
+    return 1
+
+
+def cmd_tapes_redact(args):
+    store = TapeStore(Path(args.tapes))
+    store.load_all()
+    results = store.redact_all(inplace=args.inplace)
+    changed = [path for path, flag in results if flag]
+
+    if not changed:
+        print("No redactable content detected.")
+        return 0
+
+    if args.inplace:
+        print("Applied redactions to the following tapes:")
+    else:
+        print("The following tapes contain redactable content (run with --inplace to rewrite):")
+
+    for path in changed:
+        print(f"- {path}")
+    return 0
 
 
 def cmd_run(args):
@@ -554,7 +624,27 @@ def main():
     proxy_parser = subparsers.add_parser("proxy", parents=[replay_parent], help="Replay with live fallback")
     proxy_parser.add_argument("--record", choices=list(_RECORD_CHOICES.keys()), default="disabled")
     proxy_parser.set_defaults(func=cmd_proxy, fallback="proxy")
-    
+
+    # tape management commands
+    tapes_parser = subparsers.add_parser("tapes", help="Manage replay tapes")
+    tapes_subparsers = tapes_parser.add_subparsers(dest="tapes_command")
+
+    tapes_parent = argparse.ArgumentParser(add_help=False)
+    tapes_parent.add_argument("--tapes", default="./tapes", help="Tape directory")
+
+    tapes_list_parser = tapes_subparsers.add_parser("list", parents=[tapes_parent], help="List available tapes")
+    tapes_list_parser.add_argument("--used", action="store_true", help="Only show tapes used in the current session")
+    tapes_list_parser.add_argument("--unused", action="store_true", help="Only show tapes not used in the current session")
+    tapes_list_parser.set_defaults(func=cmd_tapes_list)
+
+    tapes_validate_parser = tapes_subparsers.add_parser("validate", parents=[tapes_parent], help="Validate tape structure")
+    tapes_validate_parser.add_argument("--strict", action="store_true", help="Use strict schema validation")
+    tapes_validate_parser.set_defaults(func=cmd_tapes_validate)
+
+    tapes_redact_parser = tapes_subparsers.add_parser("redact", parents=[tapes_parent], help="Redact secrets from tapes")
+    tapes_redact_parser.add_argument("--inplace", action="store_true", help="Rewrite tapes with redactions applied")
+    tapes_redact_parser.set_defaults(func=cmd_tapes_redact)
+
     # config command
     config_parser = subparsers.add_parser("config", help="Manage program configurations")
     config_subparsers = config_parser.add_subparsers(dest="config_command", help="Config commands")
@@ -607,6 +697,10 @@ def main():
     
     # Parse arguments
     args = parser.parse_args()
+
+    if getattr(args, "command", None) == "tapes" and getattr(args, "tapes_command", None) is None:
+        tapes_parser.print_help()
+        return 0
     
     # Check for --menu flag
     if args.menu:
