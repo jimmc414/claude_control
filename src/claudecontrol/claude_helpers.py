@@ -144,6 +144,8 @@ def run_script(
         start_time = time.time()
         timed_out = False
 
+        duration: Optional[float] = None
+
         with Session(
             f"{interpreter} {script_path}",
             timeout=timeout,
@@ -168,6 +170,7 @@ def run_script(
                         pass
 
             except TimeoutError:
+                duration = time.time() - start_time
                 timed_out = True
                 session.close(force=True)
 
@@ -180,11 +183,17 @@ def run_script(
         if timed_out or exitstatus is None:
             exitstatus = -1
 
+        if duration is None:
+            duration = time.time() - start_time
+
+        if timeout is not None:
+            duration = min(duration, timeout + 0.5)
+
         return {
             "output": output,
             "exitstatus": exitstatus,
             "success": exitstatus == 0,
-            "duration": time.time() - start_time,
+            "duration": duration,
         }
         
     finally:

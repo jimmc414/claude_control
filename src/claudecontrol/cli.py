@@ -11,6 +11,7 @@ import logging
 from pathlib import Path
 
 from .core import (
+    Session,
     control,
     get_session,
     list_sessions,
@@ -22,6 +23,76 @@ from .core import (
     get_config,
 )
 from .claude_helpers import status, parallel_commands
+from .replay.modes import RecordMode, FallbackMode
+
+
+_RECORD_CHOICES = {
+    "new": RecordMode.NEW,
+    "overwrite": RecordMode.OVERWRITE,
+    "disabled": RecordMode.DISABLED,
+}
+
+_FALLBACK_CHOICES = {
+    "not_found": FallbackMode.NOT_FOUND,
+    "proxy": FallbackMode.PROXY,
+}
+
+
+def _parse_latency(value: str | None):
+    if value is None:
+        return 0
+    value = value.strip()
+    if not value:
+        return 0
+    if "," in value:
+        start, end = value.split(",", 1)
+        return (int(start), int(end))
+    return int(value)
+
+
+def _run_replay_command(args, record_default: str, fallback_default: str) -> int:
+    record_value = getattr(args, "record", record_default)
+    fallback_value = getattr(args, "fallback", fallback_default)
+    record_mode = _RECORD_CHOICES[record_value]
+    fallback_mode = _FALLBACK_CHOICES[fallback_value]
+    command = " ".join([args.program] + list(args.prog_args)).strip()
+    if not command:
+        print("Error: no program specified")
+        return 1
+
+    session = None
+    try:
+        session = Session(
+            command=command,
+            timeout=args.timeout,
+            replay=True,
+            tapes_path=args.tapes,
+            record=record_mode,
+            fallback=fallback_mode,
+            summary=args.summary,
+            latency=_parse_latency(args.latency),
+            error_rate=args.error_rate,
+        )
+        session.interact()
+    except Exception as exc:  # pragma: no cover - CLI surface
+        print(f"Error: {exc}")
+        return 1
+    finally:
+        if session:
+            session.close()
+    return 0
+
+
+def cmd_rec(args):
+    return _run_replay_command(args, record_default="new", fallback_default=args.fallback)
+
+
+def cmd_play(args):
+    return _run_replay_command(args, record_default="disabled", fallback_default=args.fallback)
+
+
+def cmd_proxy(args):
+    return _run_replay_command(args, record_default=args.record, fallback_default="proxy")
 
 
 def cmd_run(args):
@@ -460,6 +531,29 @@ def main():
     parallel_parser.add_argument("commands", nargs="+", help="Commands to run")
     parallel_parser.add_argument("--timeout", type=int, default=30, help="Timeout per command")
     parallel_parser.set_defaults(func=cmd_parallel)
+
+    # replay commands
+    replay_parent = argparse.ArgumentParser(add_help=False)
+    replay_parent.add_argument("program", help="Program to run")
+    replay_parent.add_argument("prog_args", nargs=argparse.REMAINDER, help="Program arguments")
+    replay_parent.add_argument("--tapes", default="./tapes", help="Tape directory")
+    replay_parent.add_argument("--timeout", type=int, default=30, help="Session timeout")
+    replay_parent.add_argument("--latency", help="Latency override (ms or min,max)")
+    replay_parent.add_argument("--error-rate", type=float, default=0.0, help="Error injection rate")
+    replay_parent.add_argument("--summary", action="store_true", help="Print tape summary on exit")
+
+    rec_parser = subparsers.add_parser("rec", parents=[replay_parent], help="Record a live session")
+    rec_parser.add_argument("--record", choices=list(_RECORD_CHOICES.keys()), default="new")
+    rec_parser.add_argument("--fallback", choices=list(_FALLBACK_CHOICES.keys()), default="not_found")
+    rec_parser.set_defaults(func=cmd_rec)
+
+    play_parser = subparsers.add_parser("play", parents=[replay_parent], help="Replay from tapes only")
+    play_parser.add_argument("--fallback", choices=list(_FALLBACK_CHOICES.keys()), default="not_found")
+    play_parser.set_defaults(func=cmd_play)
+
+    proxy_parser = subparsers.add_parser("proxy", parents=[replay_parent], help="Replay with live fallback")
+    proxy_parser.add_argument("--record", choices=list(_RECORD_CHOICES.keys()), default="disabled")
+    proxy_parser.set_defaults(func=cmd_proxy, fallback="proxy")
     
     # config command
     config_parser = subparsers.add_parser("config", help="Manage program configurations")

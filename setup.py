@@ -16,6 +16,9 @@ version = "0.1.0"
 install_requires = [
     "pexpect>=4.8.0",
     "psutil>=5.9.0",  # For zombie process cleanup
+    "pyjson5>=1.6.9",
+    "fastjsonschema>=2.20",
+    "portalocker>=2.8",
 ]
 
 # Optional dependencies for enhanced features
