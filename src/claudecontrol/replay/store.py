@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
+import fastjsonschema
 import portalocker
 import pyjson5
 
@@ -14,6 +15,108 @@ from .exceptions import SchemaError
 from .matchers import MatchingContext, default_command_matcher, default_stdin_matcher, filter_env
 from .model import Chunk, Exchange, IOInput, IOOutput, Tape, TapeMeta
 from .normalize import strip_ansi
+from .redact import redact_bytes
+
+
+_TAPE_SCHEMA = {
+    "type": "object",
+    "required": ["meta", "session", "exchanges"],
+    "properties": {
+        "meta": {
+            "type": "object",
+            "required": ["program", "args", "env", "cwd"],
+            "properties": {
+                "createdAt": {"type": "string"},
+                "program": {"type": "string"},
+                "args": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
+                "env": {
+                    "type": "object",
+                    "additionalProperties": {"type": "string"},
+                },
+                "cwd": {"type": "string"},
+                "pty": {
+                    "type": ["object", "null"],
+                    "properties": {
+                        "rows": {"type": "integer"},
+                        "cols": {"type": "integer"},
+                    },
+                    "additionalProperties": False,
+                },
+                "tag": {"type": ["string", "null"]},
+                "latency": {},
+                "errorRate": {},
+                "seed": {"type": ["integer", "null"]},
+            },
+            "additionalProperties": True,
+        },
+        "session": {"type": "object"},
+        "exchanges": {
+            "type": "array",
+            "items": {"type": "object"},
+        },
+    },
+    "additionalProperties": False,
+}
+
+_STRICT_TAPE_SCHEMA = {
+    "type": "object",
+    "required": ["meta", "session", "exchanges"],
+    "properties": {
+        "meta": _TAPE_SCHEMA["properties"]["meta"],
+        "session": {"type": "object"},
+        "exchanges": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["pre", "input", "output"],
+                "properties": {
+                    "pre": {"type": "object"},
+                    "input": {
+                        "type": "object",
+                        "required": ["type"],
+                        "properties": {
+                            "type": {"type": "string"},
+                            "dataText": {"type": ["string", "null"]},
+                            "dataBytesB64": {"type": ["string", "null"]},
+                        },
+                        "additionalProperties": False,
+                    },
+                    "output": {
+                        "type": "object",
+                        "required": ["chunks"],
+                        "properties": {
+                            "chunks": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "required": ["delay_ms", "dataB64"],
+                                    "properties": {
+                                        "delay_ms": {"type": "integer"},
+                                        "dataB64": {"type": "string"},
+                                        "isUtf8": {"type": ["boolean", "null"]},
+                                    },
+                                    "additionalProperties": False,
+                                },
+                            }
+                        },
+                        "additionalProperties": False,
+                    },
+                    "exit": {"type": ["object", "null"]},
+                    "dur_ms": {"type": ["integer", "null"]},
+                    "annotations": {"type": "object"},
+                },
+                "additionalProperties": False,
+            },
+        },
+    },
+    "additionalProperties": False,
+}
+
+_VALIDATE = fastjsonschema.compile(_TAPE_SCHEMA)
+_STRICT_VALIDATE = fastjsonschema.compile(_STRICT_TAPE_SCHEMA)
 
 
 def _input_to_bytes(io: IOInput) -> bytes:
@@ -79,6 +182,8 @@ class TapeStore:
 
     # ------------------------------------------------------------------ loading
     def load_all(self) -> None:
+        self.tapes.clear()
+        self.paths.clear()
         if not self.root.exists():
             return
         for path in sorted(self.root.rglob("*.json5")):
@@ -96,7 +201,7 @@ class TapeStore:
         return index
 
     # ---------------------------------------------------------------- writing
-    def write_tape(self, path: Path, tape: Tape) -> None:
+    def write_tape(self, path: Path, tape: Tape, *, mark_new: bool = True) -> None:
         data = self._encode_tape(tape)
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(path.suffix + ".tmp")
@@ -106,10 +211,72 @@ class TapeStore:
         os.replace(tmp, path)
         if path not in self.paths:
             self.paths.append(path)
-        self.new.add(path)
+        if mark_new:
+            self.new.add(path)
 
     def mark_used(self, path: Path) -> None:
         self.used.add(path)
+
+    # ---------------------------------------------------------------- management
+    def iter_tapes(self) -> Iterable[tuple[Path, Tape]]:
+        if not self.paths:
+            self.load_all()
+        return list(zip(self.paths, self.tapes))
+
+    def validate(self, *, strict: bool = False) -> List[tuple[Path, str]]:
+        validator = _STRICT_VALIDATE if strict else _VALIDATE
+        errors: List[tuple[Path, str]] = []
+        if not self.root.exists():
+            return errors
+        for path in sorted(self.root.rglob("*.json5")):
+            try:
+                with path.open("r", encoding="utf-8") as handle:
+                    payload = pyjson5.load(handle)
+                validator(payload)
+            except Exception as exc:  # pragma: no cover - schema raises detailed error
+                errors.append((path, str(exc)))
+        return errors
+
+    def redact_all(self, *, inplace: bool = False) -> List[tuple[Path, bool]]:
+        results: List[tuple[Path, bool]] = []
+        for path, tape in self.iter_tapes():
+            changed = False
+            for exchange in tape.exchanges:
+                if self._redact_input(exchange.input):
+                    changed = True
+                if self._redact_output(exchange.output):
+                    changed = True
+            results.append((path, changed))
+            if changed and inplace:
+                self.write_tape(path, tape, mark_new=False)
+        return results
+
+    def _redact_input(self, io: IOInput) -> bool:
+        changed = False
+        if io.data_text:
+            raw = io.data_text.encode("utf-8")
+            redacted = redact_bytes(raw)
+            text = redacted.decode("utf-8")
+            if text != io.data_text:
+                io.data_text = text
+                changed = True
+        if io.data_b64:
+            decoded = base64.b64decode(io.data_b64)
+            redacted = redact_bytes(decoded)
+            if redacted != decoded:
+                io.data_b64 = base64.b64encode(redacted).decode("ascii")
+                changed = True
+        return changed
+
+    def _redact_output(self, output: IOOutput) -> bool:
+        changed = False
+        for chunk in output.chunks:
+            decoded = base64.b64decode(chunk.data_b64)
+            redacted = redact_bytes(decoded)
+            if redacted != decoded:
+                chunk.data_b64 = base64.b64encode(redacted).decode("ascii")
+                changed = True
+        return changed
 
     # ---------------------------------------------------------------- helpers
     def _read_tape(self, path: Path) -> Tape:
