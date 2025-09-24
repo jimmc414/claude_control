@@ -187,16 +187,38 @@ def extract_json(output: str) -> Optional[Union[dict, list]]:
     """
     import json
     
-    # Try to find JSON blocks
+    # First pass: stack-based matching to handle nested structures
+    stack: list[tuple[str, int]] = []
+    start_index: Optional[int] = None
+    pairs = {"{": "}", "[": "]"}
+
+    for idx, char in enumerate(output):
+        if char in pairs:
+            if not stack:
+                start_index = idx
+            stack.append((char, idx))
+        elif char in pairs.values() and stack:
+            opening, open_idx = stack.pop()
+            if pairs.get(opening) != char:
+                stack.clear()
+                start_index = None
+                continue
+            if not stack and start_index is not None:
+                candidate = output[start_index : idx + 1]
+                try:
+                    return json.loads(candidate)
+                except json.JSONDecodeError:
+                    start_index = None
+                    continue
+
+    # Fallback: simple non-nested matching
     json_patterns = [
         (r"\{", r"\}"),  # Object
         (r"\[", r"\]"),  # Array
     ]
-    
+
     for start, end in json_patterns:
-        # Find all potential JSON blocks
         matches = re.finditer(f"{start}[^{start}{end}]*{end}", output)
-        
         for match in matches:
             try:
                 return json.loads(match.group(0))

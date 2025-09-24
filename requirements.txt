@@ -6,3 +6,8 @@ psutil>=5.9.0  # For zombie process cleanup
 
 # Optional but recommended
 watchdog>=2.1.0  # For efficient file monitoring
+
+# Replay and tape infrastructure
+pyjson5>=1.6.9        # JSON5 read/write for human-editable tapes
+fastjsonschema>=2.20  # Schema validation for tapes
+portalocker>=2.8      # Cross-platform file locks

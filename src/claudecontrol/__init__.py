@@ -49,6 +49,14 @@ from .testing import (
     BlackBoxTester,
     black_box_test,
 )
+from .replay import (
+    RecordMode,
+    FallbackMode,
+    TapeStore,
+    Recorder,
+    ReplayTransport,
+    TapeMissError,
+)
 
 __version__ = "0.1.0"
 __all__ = [
@@ -82,4 +90,10 @@ __all__ = [
     "InvestigationReport",
     "BlackBoxTester",
     "black_box_test",
+    "RecordMode",
+    "FallbackMode",
+    "TapeStore",
+    "Recorder",
+    "ReplayTransport",
+    "TapeMissError",
 ]

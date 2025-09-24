@@ -13,6 +13,8 @@ import threading
 import signal
 import fcntl
 import re
+import platform
+from builtins import TimeoutError as BuiltinTimeoutError
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Optional, Union, List, Dict, Any, Callable
@@ -24,6 +26,14 @@ import psutil
 
 from .exceptions import SessionError, TimeoutError, ProcessError, ConfigNotFoundError
 from .patterns import COMMON_PROMPTS, COMMON_ERRORS
+from .replay.modes import RecordMode, FallbackMode
+from .replay.store import TapeStore, KeyBuilder
+from .replay.namegen import TapeNameGenerator
+from .replay.record import Recorder
+from .replay.play import ReplayTransport
+from .replay.summary import print_summary
+from .replay.exceptions import TapeMissError
+from .replay.matchers import MatchingContext, default_command_matcher, default_stdin_matcher
 
 # Global session registry for persistence across calls
 _sessions: Dict[str, 'Session'] = {}
@@ -81,6 +91,19 @@ class Session:
         session_id: Optional[str] = None,
         persist: bool = True,
         stream: bool = False,
+        *,
+        replay: bool = False,
+        tapes_path: Optional[str] = None,
+        record: RecordMode = RecordMode.DISABLED,
+        fallback: FallbackMode = FallbackMode.NOT_FOUND,
+        summary: bool = False,
+        tape_name_generator: Optional[TapeNameGenerator] = None,
+        allow_env: Optional[List[str]] = None,
+        ignore_env: Optional[List[str]] = None,
+        stdin_matcher: Optional[Callable] = None,
+        command_matcher: Optional[Callable] = None,
+        latency: Union[int, tuple, Callable] = 0,
+        error_rate: Union[int, Callable] = 0,
     ):
         self.session_id = session_id or f"session_{int(time.time() * 1000)}"
         self.command = command
@@ -89,11 +112,50 @@ class Session:
         self.last_activity = datetime.now()
         self.persist = persist
         self.encoding = encoding
+        self.cwd = cwd or os.getcwd()
+        self.env = dict(env or {})
+        self.dimensions = dimensions
+        self.latency = latency
+        self.error_rate = error_rate
+        self.summary = summary
+        self._record_mode = record
+        self._fallback_mode = fallback
+        self._replay_enabled = replay
+        self._tapes_path = Path(tapes_path) if tapes_path else Path("./tapes")
+        self._tape_store = TapeStore(self._tapes_path)
+        self._tape_name_generator = tape_name_generator or TapeNameGenerator(self._tapes_path)
+        self._tape_index: Dict = {}
+        self._allow_env = allow_env
+        self._ignore_env = ignore_env
+        self._stdin_matcher = stdin_matcher or default_stdin_matcher
+        self._command_matcher = command_matcher or default_command_matcher
+        self._key_builder = KeyBuilder(
+            self._allow_env,
+            self._ignore_env,
+            self._stdin_matcher,
+            self._command_matcher,
+        )
+        self._recorder: Optional[Recorder] = None
+        self._using_replay = False
+        self._summary_printed = False
+        self._last_prompt: Optional[str] = None
+        self.platform = platform.platform()
+        self.tool_version = "claude_control"
+        self._spawn_command = command
+        self._spawn_timeout = timeout
+        self._spawn_cwd = cwd
+        self._spawn_env = env
+        self._spawn_encoding = encoding
+        self._spawn_dimensions = dimensions
+        self._spawn_stream = stream
         
         # Output management
         config = _load_config()
         self.output_buffer = deque(maxlen=config["output_limit"])
-        self.full_output = []
+        self.full_output = [
+            f"[session {self.session_id} started {self.created_at.isoformat()}]\n"
+        ]
+        self._last_output_at: Optional[datetime] = None
 
         # Track expect/response history for configuration generation
         self.expect_history: List[Dict[str, Any]] = []
@@ -112,45 +174,95 @@ class Session:
         self.pipe_fd = None
         if stream:
             self._setup_pipe_stream()
-        
-        # Create the process
+
+        # Create the initial transport (live or replay)
         try:
-            self.process = pexpect.spawn(
-                command,
-                timeout=timeout,
-                cwd=cwd,
-                env=env,
-                encoding=encoding,
-                dimensions=dimensions,
-                echo=False,
-            )
-            
-            # Set up output capture
-            self.process.logfile_read = self._OutputCapture(self)
-            
-            # Register for cleanup
+            self._initialize_transport()
             if persist:
                 with _lock:
                     _sessions[self.session_id] = self
-                    
         except Exception as e:
-            raise ProcessError(f"Failed to spawn '{command}': {e}")
+            raise ProcessError(f"Failed to initialize session for '{command}': {e}")
     
     class _OutputCapture:
         """Capture output to both buffer and file"""
         def __init__(self, session):
             self.session = session
-            
+
         def write(self, data):
             if data:
                 self.session._capture_output(data)
-                
+
         def flush(self):
             pass
+
+    # ------------------------------------------------------------------ replay helpers
+    def _initialize_transport(self) -> None:
+        if self._replay_enabled and self._record_mode == RecordMode.DISABLED:
+            self._setup_replay_transport()
+        else:
+            self._setup_live_transport()
+
+    def _setup_live_transport(self) -> None:
+        self.process = pexpect.spawn(
+            self._spawn_command,
+            timeout=self._spawn_timeout,
+            cwd=self._spawn_cwd,
+            env=self._spawn_env,
+            encoding=self._spawn_encoding,
+            dimensions=self._spawn_dimensions,
+            echo=False,
+        )
+        self.process.logfile_read = self._OutputCapture(self)
+        self._using_replay = False
+        if self._record_mode != RecordMode.DISABLED:
+            self._recorder = Recorder(
+                session=self,
+                tapes_path=self._tapes_path,
+                mode=self._record_mode,
+                namegen=self._tape_name_generator,
+            )
+            self._recorder.start()
+
+    def _setup_replay_transport(self) -> None:
+        self._tape_store.load_all()
+        self._tape_index = self._tape_store.build_index(self._key_builder)
+        self.process = ReplayTransport(
+            self._tape_store,
+            self._tape_index,
+            self._key_builder,
+            self._matching_context(),
+            self.latency,
+            self.error_rate,
+        )
+        self._using_replay = True
+
+    def _switch_to_live(self) -> None:
+        self._setup_live_transport()
+
+    def _matching_context(self, prompt: Optional[str] = None) -> MatchingContext:
+        return MatchingContext(
+            program=self.command,
+            args=[],
+            env=self.env,
+            cwd=self.cwd,
+            prompt=prompt if prompt is not None else self._last_prompt,
+        )
+
+    def _update_prompt_from_process(self) -> None:
+        prompt = getattr(self.process, "after", None)
+        if isinstance(prompt, bytes):
+            try:
+                prompt = prompt.decode(self.encoding)
+            except Exception:
+                prompt = prompt.decode("utf-8", "ignore")
+        if isinstance(prompt, str) and prompt:
+            self._last_prompt = prompt
     
     def _capture_output(self, data: str):
         """Capture output with automatic rotation"""
         self.last_activity = datetime.now()
+        self._last_output_at = self.last_activity
         
         # Add to buffers
         lines = data.splitlines(keepends=True)
@@ -176,28 +288,65 @@ class Session:
         if log_file.stat().st_size > 10 * 1024 * 1024:
             rotated = log_dir / f"output_{int(time.time())}.log"
             log_file.rename(rotated)
+
+    def _drain_output(self) -> None:
+        """Best-effort drain of any pending child output."""
+        if not self.process or self._using_replay:
+            return
+        if not hasattr(self.process, "read_nonblocking"):
+            return
+        while True:
+            try:
+                chunk = self.process.read_nonblocking(size=1024, timeout=0)
+            except (pexpect.TIMEOUT, BuiltinTimeoutError, pexpect.EOF):
+                break
+            except Exception:
+                break
+            else:
+                if not chunk:
+                    break
+
     
-    def send(self, text: str, delay: float = 0) -> None:
+    def send(self, text: str, delay: float = 0, _record: bool = True) -> None:
         """Send input to the process"""
+        if self._using_replay:
+            payload = text.encode(self.encoding)
+            self.process.ctx = self._matching_context()
+            try:
+                self.process.send(payload)
+            except TapeMissError:
+                if self._fallback_mode == FallbackMode.PROXY:
+                    self._switch_to_live()
+                    self._using_replay = False
+                    return self.send(text, delay)
+                raise
+            self.last_activity = datetime.now()
+            return
+
         if not self.is_alive():
             raise SessionError(f"Session {self.session_id} is not active")
-            
+
         # Write to pipe if streaming
         if self.pipe_fd is not None:
             self._write_pipe_event("IN ", text)
-            
+
+        if self._recorder and _record:
+            self._recorder.on_send(text.encode(self.encoding), "raw", self._matching_context())
+
         if delay:
             for char in text:
                 self.process.send(char)
                 time.sleep(delay)
         else:
             self.process.send(text)
-            
+
         self.last_activity = datetime.now()
     
     def sendline(self, line: str = "") -> None:
         """Send a line to the process"""
-        self.send(line + "\n")
+        if self._recorder and not self._using_replay:
+            self._recorder.on_send((line + "\n").encode(self.encoding), "line", self._matching_context())
+        self.send(line + "\n", _record=False)
     
     def expect(
         self,
@@ -213,18 +362,79 @@ class Session:
             patterns = [patterns]
             
         timeout = timeout or self.timeout
-        
+        output_marker = len(self.full_output)
+
         try:
-            index = self.process.expect(
-                patterns,
-                timeout=timeout,
-                searchwindowsize=searchwindowsize,
-            )
+            if self._using_replay:
+                target = patterns if len(patterns) > 1 else patterns[0]
+                index = self.process.expect(target, timeout=timeout)
+            else:
+                index = self.process.expect(
+                    patterns,
+                    timeout=timeout,
+                    searchwindowsize=searchwindowsize,
+                )
             self.last_activity = datetime.now()
             self._record_expectation("expect", patterns, index)
+            self._update_prompt_from_process()
+            if self._recorder and not self._using_replay:
+                exit_info = None
+                if not self.process.isalive():
+                    exit_info = {
+                        "code": getattr(self.process, "exitstatus", None),
+                        "signal": getattr(self.process, "signalstatus", None),
+                    }
+                self._recorder.on_exchange_end(self._matching_context(), exit_info)
             return index
-            
-        except pexpect.TIMEOUT:
+
+        except (pexpect.TIMEOUT, BuiltinTimeoutError):
+            output_growth = len(self.full_output) - output_marker
+            recent_output = (
+                self._last_output_at is not None
+                and datetime.now() - self._last_output_at < timedelta(seconds=1)
+            )
+            retried = False
+            if (
+                timeout is not None
+                and timeout < self.timeout
+                and self.process.isalive()
+                and (output_growth > 0 or recent_output)
+            ):
+                before = getattr(self.process, "before", "")
+                if before:
+                    if isinstance(before, bytes):
+                        try:
+                            before_text = before.decode(self.encoding, errors="ignore")
+                        except Exception:
+                            before_text = before.decode("utf-8", errors="ignore")
+                    else:
+                        before_text = str(before)
+                    if before_text.rstrip().endswith("..."):
+                        try:
+                            self.process.sendline("")
+                        except Exception:
+                            pass
+                try:
+                    index = self.process.expect(
+                        patterns,
+                        timeout=self.timeout,
+                        searchwindowsize=searchwindowsize,
+                    )
+                    retried = True
+                    self.last_activity = datetime.now()
+                    self._record_expectation("expect", patterns, index)
+                    self._update_prompt_from_process()
+                    if self._recorder and not self._using_replay:
+                        exit_info = None
+                        if not self.process.isalive():
+                            exit_info = {
+                                "code": getattr(self.process, "exitstatus", None),
+                                "signal": getattr(self.process, "signalstatus", None),
+                            }
+                        self._recorder.on_exchange_end(self._matching_context(), exit_info)
+                    return index
+                except (pexpect.TIMEOUT, BuiltinTimeoutError):
+                    retried = True
             # Include recent output in error for debugging
             recent = self.get_recent_output(50)
             raise TimeoutError(
@@ -244,13 +454,26 @@ class Session:
             patterns = [patterns]
             
         timeout = timeout or self.timeout
-        
+
         try:
-            index = self.process.expect_exact(patterns, timeout=timeout)
+            if self._using_replay:
+                target = patterns if len(patterns) > 1 else patterns[0]
+                index = self.process.expect_exact(target, timeout=timeout)
+            else:
+                index = self.process.expect_exact(patterns, timeout=timeout)
             self.last_activity = datetime.now()
             self._record_expectation("expect_exact", patterns, index)
+            self._update_prompt_from_process()
+            if self._recorder and not self._using_replay:
+                exit_info = None
+                if not self.process.isalive():
+                    exit_info = {
+                        "code": getattr(self.process, "exitstatus", None),
+                        "signal": getattr(self.process, "signalstatus", None),
+                    }
+                self._recorder.on_exchange_end(self._matching_context(), exit_info)
             return index
-        except pexpect.TIMEOUT:
+        except (pexpect.TIMEOUT, BuiltinTimeoutError):
             recent = self.get_recent_output(50)
             raise TimeoutError(
                 f"Timeout waiting for exact patterns {patterns}\n"
@@ -319,15 +542,22 @@ class Session:
     
     def get_recent_output(self, lines: int = 100) -> str:
         """Get recent output lines"""
+        self._drain_output()
         return "".join(list(self.output_buffer)[-lines:])
-    
+
     def get_full_output(self) -> str:
         """Get all captured output"""
+        self._drain_output()
         return "".join(self.full_output)
-    
+
     def is_alive(self) -> bool:
         """Check if process is still running"""
-        return self.process and self.process.isalive()
+        if not self.process:
+            return False
+        try:
+            return self.process.isalive()
+        except (pexpect.exceptions.ExceptionPexpect, OSError):
+            return False
     
     def exitstatus(self) -> Optional[int]:
         """Get exit status if process has ended"""
@@ -339,23 +569,27 @@ class Session:
         """Close the session gracefully"""
         if not self.process:
             return None
-            
+
         try:
-            if self.is_alive():
-                if force:
-                    self.process.terminate(force=True)
-                else:
-                    self.process.terminate()
-                    time.sleep(0.5)
-                    if self.is_alive():
+            if self._using_replay:
+                self.process.close()
+                exitstatus = getattr(self.process, "exitstatus", 0)
+            else:
+                if self.is_alive():
+                    if force:
                         self.process.terminate(force=True)
-                        
-            exitstatus = self.process.exitstatus
-            
+                    else:
+                        self.process.terminate()
+                        time.sleep(0.5)
+                        if self.is_alive():
+                            self.process.terminate(force=True)
+
+                exitstatus = self.process.exitstatus
+
         except Exception as e:
             logger.error(f"Error closing session: {e}")
             exitstatus = -1
-            
+
         finally:
             # Clean up pipe if streaming
             if self.pipe_fd is not None:
@@ -376,7 +610,14 @@ class Session:
             if self.persist:
                 with _lock:
                     _sessions.pop(self.session_id, None)
-                    
+
+            if self._recorder and not self._using_replay:
+                self._recorder.finalize(self._tape_store)
+
+            if self.summary and not self._summary_printed:
+                print_summary(self._tape_store)
+                self._summary_printed = True
+
         return exitstatus
     
     def interact(self) -> None:

@@ -296,17 +296,23 @@ class ProgramInvestigator:
         
         # Look for patterns at end of output
         lines = output.strip().split('\n')
+        prompt_endings = [">", "$", "#", ":", "]", ")", "»", "→"]
         if lines:
             last_line = lines[-1]
-            
-            # Common prompt endings
-            prompt_endings = [">", "$", "#", ":", "]", ")", "»", "→"]
+
             for ending in prompt_endings:
                 if last_line.endswith(ending):
                     # Extract the prompt pattern
                     if len(last_line) <= 20:  # Reasonable prompt length
                         return last_line
-        
+
+        stripped = output.strip()
+        if stripped:
+            first_token = stripped.split()[0]
+            for ending in prompt_endings:
+                if first_token.endswith(ending) and len(first_token) <= 20:
+                    return first_token
+
         return None
     
     def _probe_help_commands(self):
@@ -582,9 +588,14 @@ class ProgramInvestigator:
                 self.report.prompts.append(prompt)
             
             # Look for command-response patterns
-            if i > 0 and prompt:
-                # Previous line might be a command
-                potential_cmd = lines[i-1].strip()
+            if prompt:
+                line_text = line.strip()
+                potential_cmd = ""
+                if line_text.startswith(prompt):
+                    potential_cmd = line_text[len(prompt):].strip()
+                elif i > 0:
+                    potential_cmd = lines[i - 1].strip()
+
                 if potential_cmd and len(potential_cmd) <= 50:
                     if potential_cmd not in self.report.commands:
                         self.report.commands[potential_cmd] = {
