@@ -209,8 +209,18 @@ class TapeStore:
             json_text = pyjson5.dumps(data, indent=2) + "\n"
             handle.write(json_text)
         os.replace(tmp, path)
-        if path not in self.paths:
+
+        if path in self.paths:
+            idx = self.paths.index(path)
+            # Ensure the in-memory tape list stays aligned with ``paths``
+            if idx < len(self.tapes):
+                self.tapes[idx] = tape
+            else:  # pragma: no cover - defensive, should not happen in practice
+                self.tapes.append(tape)
+        else:
             self.paths.append(path)
+            self.tapes.append(tape)
+
         if mark_new:
             self.new.add(path)
 

@@ -14,6 +14,7 @@ import signal
 import fcntl
 import re
 import platform
+import shlex
 from builtins import TimeoutError as BuiltinTimeoutError
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -155,6 +156,13 @@ class Session:
         self._spawn_encoding = encoding
         self._spawn_dimensions = dimensions
         self._spawn_stream = stream
+
+        try:
+            parts = shlex.split(command)
+        except ValueError:
+            parts = [command]
+        self._program = parts[0] if parts else command
+        self._args = parts[1:] if len(parts) > 1 else []
         
         # Output management
         config = _load_config()
@@ -252,9 +260,9 @@ class Session:
 
     def _matching_context(self, prompt: Optional[str] = None) -> MatchingContext:
         return MatchingContext(
-            program=self.command,
-            args=[],
-            env=self.env,
+            program=self._program,
+            args=list(self._args),
+            env=dict(self.env),
             cwd=self.cwd,
             prompt=prompt if prompt is not None else self._last_prompt,
         )

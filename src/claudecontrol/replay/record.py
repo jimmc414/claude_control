@@ -6,13 +6,23 @@ import base64
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+import shlex
+from typing import Dict, List, Optional, Tuple
 
 from .decorators import InputDecorator, OutputDecorator, TapeDecorator
 from .matchers import MatchingContext
 from .model import Chunk, Exchange, IOInput, IOOutput, Tape, TapeMeta
 from .namegen import TapeNameGenerator
 from .redact import redact_bytes
+from .modes import RecordMode
+
+
+def _input_to_bytes(io: IOInput) -> bytes:
+    if io.data_b64:
+        return base64.b64decode(io.data_b64)
+    if io.data_text is not None:
+        return io.data_text.encode("utf-8")
+    return b""
 
 
 class _CompositeWriter:
@@ -75,7 +85,7 @@ class Recorder:
 
     session: "Session"
     tapes_path: Path
-    mode: object
+    mode: RecordMode
     namegen: TapeNameGenerator
     input_decorator: Optional[InputDecorator] = None
     output_decorator: Optional[OutputDecorator] = None
@@ -88,6 +98,12 @@ class Recorder:
         self._current_input: Optional[IOInput] = None
         self._current_prompt: Optional[str] = None
         self._start_ts: Optional[float] = None
+        self._pending: List[Tuple[MatchingContext, Exchange]] = []
+        self._store = self.session._tape_store
+        self._builder = self.session._key_builder
+        # Prime the store for lookups so record modes can act deterministically.
+        self._store.load_all()
+        self._index: Dict[Tuple, Tuple[int, int]] = self._store.build_index(self._builder)
 
     # ------------------------------------------------------------------ setup
     def start(self) -> None:
@@ -134,21 +150,26 @@ class Recorder:
             exit=exit_info,
             dur_ms=dur_ms,
         )
-        self._append_exchange(ctx, exchange)
+        self._pending.append((MatchingContext(
+            program=ctx.program,
+            args=list(ctx.args),
+            env=dict(ctx.env),
+            cwd=ctx.cwd,
+            prompt=ctx.prompt,
+        ), exchange))
         self._current_input = None
 
     # ----------------------------------------------------------------- helpers
-    def _append_exchange(self, ctx: MatchingContext, exchange: Exchange) -> None:
-        tape = self._ensure_tape(ctx)
-        tape.exchanges.append(exchange)
-
     def _ensure_tape(self, ctx: MatchingContext) -> Tape:
         if self._tape is None:
             path = self.namegen(self.session)
+            command_parts = self._split_command(self.session.command)
+            program = command_parts[0] if command_parts else self.session.command
+            args = command_parts[1:] if len(command_parts) > 1 else []
             meta = TapeMeta(
                 created_at=time.strftime("%Y-%m-%dT%H:%M:%S.%fZ", time.gmtime()),
-                program=self.session.command,
-                args=[],
+                program=program,
+                args=args,
                 env=self.session.env,
                 cwd=self.session.cwd,
                 pty={"rows": self.session.dimensions[0], "cols": self.session.dimensions[1]},
@@ -173,11 +194,43 @@ class Recorder:
             self._tape_path = path
         return self._tape
 
+    def _split_command(self, command: str) -> List[str]:
+        try:
+            return shlex.split(command)
+        except ValueError:  # pragma: no cover - defensive for malformed commands
+            return [command]
+
     # ---------------------------------------------------------------- finalize
     def finalize(self, store) -> None:
-        if not self._tape or not self._tape_path:
+        if not self._pending:
             return
-        if not self._tape.exchanges:
-            return
-        path = self._tape_path
-        store.write_tape(path, self._tape)
+        replacements: Dict[int, List[Tuple[int, Exchange]]] = {}
+        new_exchanges: List[Tuple[MatchingContext, Exchange]] = []
+
+        for ctx, exchange in self._pending:
+            stdin = _input_to_bytes(exchange.input)
+            key = self._builder.context_key(ctx, stdin)
+            match = self._index.get(key)
+            if match is None:
+                new_exchanges.append((ctx, exchange))
+                continue
+            if self.mode == RecordMode.NEW:
+                continue
+            tape_idx, exchange_idx = match
+            replacements.setdefault(tape_idx, []).append((exchange_idx, exchange))
+
+        for tape_idx, pairs in replacements.items():
+            tape = store.tapes[tape_idx]
+            for exchange_idx, exchange in pairs:
+                tape.exchanges[exchange_idx] = exchange
+            store.write_tape(store.paths[tape_idx], tape, mark_new=False)
+
+        if new_exchanges:
+            first_ctx = new_exchanges[0][0]
+            tape = self._ensure_tape(first_ctx)
+            for _, exchange in new_exchanges:
+                tape.exchanges.append(exchange)
+            if self._tape_path:
+                store.write_tape(self._tape_path, tape)
+
+        self._pending.clear()
