@@ -8,6 +8,8 @@ import time
 from dataclasses import dataclass
 from typing import Optional
 
+import pexpect
+
 from .errors import should_inject_error
 from .exceptions import TapeMissError
 from .latency import resolve_latency
@@ -77,56 +79,132 @@ class ReplayTransport:
 
     # ---------------------------------------------------------------- expect api
     def expect(self, pattern, timeout: Optional[int] = None) -> int:
-        if isinstance(pattern, (list, tuple)):
-            return self._expect_list(pattern, timeout)
-        regex = re.compile(pattern) if isinstance(pattern, str) else pattern
+        patterns = pattern if isinstance(pattern, (list, tuple)) else [pattern]
+        return self._expect_list(patterns, timeout)
+
+    def expect_exact(self, pattern, timeout: Optional[int] = None) -> int:
+        if not isinstance(pattern, (list, tuple)):
+            patterns = [pattern]
+        else:
+            patterns = list(pattern)
+
         deadline = time.time() + (timeout or 30)
+        timeout_index = self._timeout_index(patterns)
+
+        while time.time() < deadline:
+            text = self._buffer.decode("utf-8", "ignore")
+            buf_bytes = bytes(self._buffer)
+            for idx, candidate in enumerate(patterns):
+                if self._is_eof(candidate):
+                    if self._buffer_closed():
+                        self._set_before_after(buf_bytes, b"")
+                        self.match = None
+                        return idx
+                    continue
+                if self._is_timeout(candidate):
+                    continue
+
+                if isinstance(candidate, bytes):
+                    if candidate in buf_bytes:
+                        head, tail = buf_bytes.split(candidate, 1)
+                        self.match = None
+                        self._set_before_after(head, tail)
+                        return idx
+                else:
+                    literal = str(candidate)
+                    if literal in text:
+                        head, tail = text.split(literal, 1)
+                        self.match = None
+                        self.before = head.encode("utf-8", "ignore")
+                        self.after = tail.encode("utf-8", "ignore")
+                        return idx
+            time.sleep(0.01)
+
+        if timeout_index is not None:
+            self.match = None
+            self._set_before_after(bytes(self._buffer), b"")
+            return timeout_index
+        raise TimeoutError("Replay expect_exact timeout")
+
+    def _expect_list(self, patterns, timeout: Optional[int]) -> int:
+        compiled = [self._prepare_pattern(p) for p in patterns]
+        deadline = time.time() + (timeout or 30)
+        timeout_index = self._timeout_index(patterns)
+
         while time.time() < deadline:
             try:
                 text = self._buffer.decode("utf-8")
             except UnicodeDecodeError:
                 text = self._buffer.decode("utf-8", "ignore")
-            match = regex.search(text)
-            if match:
-                self.match = match
-                self.before = text[: match.start()].encode("utf-8", "ignore")
-                self.after = text[match.end() :].encode("utf-8", "ignore")
-                return 0
-            time.sleep(0.01)
-        raise TimeoutError("Replay expect timeout")
-
-    def expect_exact(self, pattern, timeout: Optional[int] = None) -> int:
-        if isinstance(pattern, str):
-            pattern = [pattern]
-        elif not isinstance(pattern, (list, tuple)):
-            pattern = [pattern]
-        deadline = time.time() + (timeout or 30)
-        while time.time() < deadline:
-            text = self._buffer.decode("utf-8", "ignore")
-            for idx, candidate in enumerate(pattern):
-                if candidate in text:
+            buf_bytes = bytes(self._buffer)
+            for idx, entry in enumerate(compiled):
+                kind, payload = entry
+                if kind == "timeout":
+                    continue
+                if kind == "eof":
+                    if self._buffer_closed():
+                        self.match = None
+                        self._set_before_after(buf_bytes, b"")
+                        return idx
+                    continue
+                if kind == "regex":
+                    match = payload.search(text)
+                    if match:
+                        self.match = match
+                        self.before = text[: match.start()].encode("utf-8", "ignore")
+                        self.after = text[match.end() :].encode("utf-8", "ignore")
+                        return idx
+                elif kind == "bytes" and payload in buf_bytes:
+                    head, tail = buf_bytes.split(payload, 1)
                     self.match = None
-                    self.before = text.split(candidate)[0].encode("utf-8", "ignore")
-                    tail = text.split(candidate, 1)[1]
-                    self.after = tail.encode("utf-8", "ignore")
+                    self._set_before_after(head, tail)
                     return idx
+                elif kind == "literal":
+                    if payload in text:
+                        head, tail = text.split(payload, 1)
+                        self.match = None
+                        self.before = head.encode("utf-8", "ignore")
+                        self.after = tail.encode("utf-8", "ignore")
+                        return idx
             time.sleep(0.01)
-        raise TimeoutError("Replay expect_exact timeout")
 
-    def _expect_list(self, patterns, timeout: Optional[int]) -> int:
-        compiled = [re.compile(p) if isinstance(p, str) else p for p in patterns]
-        deadline = time.time() + (timeout or 30)
-        while time.time() < deadline:
-            text = self._buffer.decode("utf-8", "ignore")
-            for idx, regex in enumerate(compiled):
-                match = regex.search(text)
-                if match:
-                    self.match = match
-                    self.before = text[: match.start()].encode("utf-8", "ignore")
-                    self.after = text[match.end() :].encode("utf-8", "ignore")
-                    return idx
-            time.sleep(0.01)
+        if timeout_index is not None:
+            self.match = None
+            self._set_before_after(bytes(self._buffer), b"")
+            return timeout_index
         raise TimeoutError("Replay expect timeout")
+
+    def _prepare_pattern(self, pattern):
+        if self._is_timeout(pattern):
+            return ("timeout", pattern)
+        if self._is_eof(pattern):
+            return ("eof", pattern)
+        if isinstance(pattern, bytes):
+            return ("bytes", pattern)
+        if isinstance(pattern, str):
+            return ("regex", re.compile(pattern))
+        if hasattr(pattern, "search"):
+            return ("regex", pattern)
+        return ("literal", str(pattern))
+
+    def _timeout_index(self, patterns) -> Optional[int]:
+        for idx, pattern in enumerate(patterns):
+            if self._is_timeout(pattern):
+                return idx
+        return None
+
+    def _is_timeout(self, pattern) -> bool:
+        return pattern is pexpect.TIMEOUT
+
+    def _is_eof(self, pattern) -> bool:
+        return pattern is pexpect.EOF
+
+    def _buffer_closed(self) -> bool:
+        return self._closed
+
+    def _set_before_after(self, before: bytes, after: bytes) -> None:
+        self.before = before
+        self.after = after
 
     # ---------------------------------------------------------------- misc api
     def read_nonblocking(self, size: int = 1024, timeout: float = 0) -> str:

@@ -892,11 +892,30 @@ def control(
     """
     # Check for reusable session
     if reuse and not session_id:
+        requested_cwd = cwd if cwd is not None else os.getcwd()
+        requested_env = env if env is not None else None
         with _lock:
             for sid, session in _sessions.items():
-                if session.command == command and session.is_alive():
-                    logger.debug(f"Reusing session {sid} for command: {command}")
-                    return session
+                if not session.is_alive():
+                    continue
+                if session.command != command:
+                    continue
+                if session.cwd != requested_cwd:
+                    continue
+                if session._spawn_timeout != timeout:
+                    continue
+                if session._spawn_env != requested_env:
+                    continue
+                if session._spawn_stream != stream:
+                    continue
+                if getattr(session, "_config_name", None) != with_config:
+                    continue
+                logger.debug(
+                    "Reusing session %s for command '%s' with matching parameters",
+                    sid,
+                    command,
+                )
+                return session
     
     # Check for existing session by ID
     if session_id and session_id in _sessions:
