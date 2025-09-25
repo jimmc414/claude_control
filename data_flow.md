@@ -253,7 +253,7 @@ graph LR
         ERROR[/Raise Exception/]
     end
 
-    CMD -->|control()| GET_SESSION
+    CMD -->|"control()"| GET_SESSION
     GET_SESSION -->|session| SEND
     SEND -->|text to stdin| EXPECT
     EXPECT --> MATCH
