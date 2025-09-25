@@ -6,7 +6,7 @@
 
 ```mermaid
 graph TD
-    subgraph "Automation & Analysis"
+    subgraph AutomationAnalysis["Automation & Analysis"]
         CLI_run[ccontrol run<br/>cmd_run]
         CLI_investigate[ccontrol investigate<br/>cmd_investigate]
         CLI_test[ccontrol test<br/>cmd_test]
@@ -15,7 +15,7 @@ graph TD
         CLI_menu[ccontrol<br/>interactive_menu]
     end
 
-    subgraph "Replay-Oriented Commands"
+    subgraph ReplayCommands["Replay-Oriented Commands"]
         CLI_rec[ccontrol rec<br/>cmd_rec]
         CLI_play[ccontrol play<br/>cmd_play]
         CLI_proxy[ccontrol proxy<br/>cmd_proxy]
@@ -25,7 +25,7 @@ graph TD
         CLI_tapes_diff[ccontrol tapes diff<br/>cmd_tapes_diff]
     end
 
-    subgraph "Core Control Layer"
+    subgraph CoreControlLayer["Core Control Layer"]
         control[control<br/>get/create session]
         Session_init[Session.__init__]
         init_transport[Session._initialize_transport]
@@ -80,7 +80,7 @@ graph TD
 
 ```mermaid
 graph TD
-    subgraph "High-Level API"
+    subgraph HighLevelAPI["High-Level API"]
         API_run[run<br/>one-liner]
         API_control[control<br/>persistent session]
         API_investigate[investigate_program]
@@ -91,7 +91,7 @@ graph TD
         API_tapestore[TapeStore]
     end
 
-    subgraph "Session Management"
+    subgraph SessionManagement["Session Management"]
         Session_new[Session.__init__]
         Session_expect[Session.expect]
         Session_send[Session.send/sendline]
@@ -101,7 +101,7 @@ graph TD
         summary[print_summary]
     end
 
-    subgraph "Replay Integration"
+    subgraph ReplayIntegration["Replay Integration"]
         key_builder[KeyBuilder]
         recorder_on_send[Recorder.on_send]
         recorder_on_end[Recorder.on_exchange_end]
@@ -111,14 +111,14 @@ graph TD
         find_matches[TapeStore.find_matches]
     end
 
-    subgraph "Pattern Matching"
+    subgraph PatternMatching["Pattern Matching"]
         wait_for_prompt[wait_for_prompt]
         detect_patterns[detect_prompt_pattern]
         classify[classify_output]
         extract_json[extract_json]
     end
 
-    subgraph "Process Layer"
+    subgraph ProcessLayer["Process Layer"]
         spawn_process[pexpect.spawn]
         read_output[read_nonblocking]
         write_input[process.send]
@@ -161,7 +161,7 @@ graph TD
 
 ```mermaid
 graph TD
-    subgraph "Session Creation"
+    subgraph SessionCreation["Session Creation"]
         control_func[control()]
         find[find_session]
         new[Session.__init__]
@@ -175,7 +175,7 @@ graph TD
         register[register_session]
     end
 
-    subgraph "Session Operations"
+    subgraph SessionOperations["Session Operations"]
         expect[Session.expect/expect_exact]
         send[Session.send/sendline]
         replay_send[ReplayTransport.send/sendline]
@@ -186,7 +186,7 @@ graph TD
         check[Session.is_alive]
     end
 
-    subgraph "Session Cleanup"
+    subgraph SessionCleanup["Session Cleanup"]
         close[Session.close]
         terminate[process.terminate/close]
         cleanup[cleanup_resources]
