@@ -113,7 +113,7 @@ sequenceDiagram
     participant Errors as Error Injector
     participant Live as Live Process
 
-    Session->>Player: sendline("select 1;")
+    Session->>Player: sendline("select 1")
     Player->>Matcher: build_context(program, args, env, prompt, stdin)
     Matcher->>Store: lookup(context)
     alt Match found
