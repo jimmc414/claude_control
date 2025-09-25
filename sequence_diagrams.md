@@ -36,7 +36,7 @@ sequenceDiagram
 
     Session-->>Caller: ready session (send/expect/close)
 
-    Note over Session,Recorder,Player: Recorder & Player share MatchingContext, decorators, redactors
+    Note over Session,Recorder: Recorder & Player share MatchingContext, decorators, redactors
 ```
 
 ### Integration Notes
