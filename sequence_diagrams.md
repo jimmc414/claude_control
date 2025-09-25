@@ -116,7 +116,6 @@ sequenceDiagram
     Session->>Player: sendline("select 1;")
     Player->>Matcher: build_context(program, args, env, prompt, stdin)
     Matcher->>Store: lookup(context)
-
     alt Match found
         Store-->>Matcher: tape_ref
         Matcher-->>Player: matched_exchange
