@@ -250,7 +250,7 @@ graph TD
 1. **Discovery Flow**: CLI/API → ProgramInvestigator → Session → Target Program → Patterns → Report
 2. **Testing Flow**: CLI/API → BlackBoxTester → Multiple Sessions → Target Program → Test Results
 3. **Automation Flow**: CLI/API → Helpers/Session → Target Program → Output/State
-4. **Persistence Flow**: Session ↔ Registry ↔ File System (logs, configs, reports)
+4. **Persistence Flow**: Session <-> Registry <-> File System (logs, configs, reports)
 5. **Record Flow**: Session (record mode) → Recorder → Matchers/Normalizers/Decorators → TapeStore → Tape Files → Summary Reporter
 6. **Replay Flow**: Session (play mode) → TapeStore/TapeIndex → Player → Latency/Error Policies → Session → Caller
 7. **Proxy Flow**: Player miss + fallback proxy → Live Session → Recorder → TapeStore (per mode policy)

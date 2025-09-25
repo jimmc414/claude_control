@@ -2,26 +2,26 @@
 
 **Give Claude control of your terminal** - A powerful Python library for four essential CLI tasks:
 
-## 🎯 Four Core Capabilities
+## Four Core Capabilities
 
-### 1. 🔍 **Discover** - Investigate Unknown Programs
+### 1. **Discover** - Investigate Unknown Programs
 Automatically explore and understand any CLI tool's interface, commands, and behavior - even without documentation.
 
-### 2. 🧪 **Test** - Comprehensive Black-Box Testing  
+### 2. **Test** - Comprehensive Black-Box Testing  
 Thoroughly test CLI programs for reliability, error handling, performance, and edge cases without access to source code.
 
-### 3. 🤖 **Automate** - Intelligent CLI Interaction
+### 3. **Automate** - Reliable CLI Interaction
 Create robust automation for any command-line program with session persistence, error recovery, and parallel execution.
 
-### 4. 🎞️ **Record & Replay** - Talkback-Style Session Tapes
+### 4. **Record & Replay** - Talkback-Style Session Tapes
 Capture interactive CLI sessions into human-editable JSON5 "tapes" and deterministically replay them with Talkback-style modes,
 matchers, decorators, latency control, and exit summaries.
 
 ---
 
-ClaudeControl excels at all four tasks with zero configuration and intelligent defaults, making it the Swiss Army knife for CLI program interaction.
+ClaudeControl excels at all four tasks with zero configuration and practical defaults, making it the Swiss Army knife for CLI program interaction.
 
-## 📊 What Can ClaudeControl Do?
+## What Can ClaudeControl Do?
 
 | Task | Without ClaudeControl | With ClaudeControl |
 |------|----------------------|-------------------|
@@ -33,25 +33,25 @@ ClaudeControl excels at all four tasks with zero configuration and intelligent d
 | **Monitoring CLI processes** | Constant manual checking | Automated pattern watching |
 | **Recording & Replaying sessions** | Ad-hoc screen captures, brittle mocks | Deterministic JSON5 tapes with Talkback-style controls |
 
-## ✨ Key Features
+## Key Features
 
-- **🔍 Program Investigation** - Automatically explore and understand unknown CLI tools
-- **🎯 Interactive Menu** - User-friendly interface when run without arguments
-- **🚀 Zero Configuration** - Works immediately with smart defaults
-- **🔄 Session Persistence** - Reuse sessions across script runs
-- **🛡️ Safety First** - Built-in protections for dangerous operations
-- **📊 Comprehensive Reports** - Detailed analysis of program behavior
-- **🧪 Black-Box Testing** - Test programs without source code access
-- **⚡ Parallel Execution** - Run multiple commands concurrently
-- **📡 Real-time Streaming** - Named pipe support for output monitoring
-- **🔐 SSH Operations** - Automated SSH command execution
-- **📈 Process Monitoring** - Watch for patterns and react to events
-- **🎨 Pattern Matching** - Advanced text extraction and classification
-- **🎞️ Replay Modes & Matchers** - Talkback-style `RecordMode`, `FallbackMode`, and configurable matchers/normalizers
-- **⏱️ Latency & Error Injection** - Simulate streaming pace or injected failures during replay
-- **📝 Exit Summaries** - Automatic report of new and unused tapes for CI hygiene
+- **Program Investigation** - Automatically explore and understand unknown CLI tools
+- **Interactive Menu** - User-friendly interface when run without arguments
+- **Zero Configuration** - Works immediately with practical defaults
+- **Session Persistence** - Reuse sessions across script runs
+- **Safety First** - Built-in protections for dangerous operations
+- **Comprehensive Reports** - Detailed analysis of program behavior
+- **Black-Box Testing** - Test programs without source code access
+- **Parallel Execution** - Run multiple commands concurrently
+- **Real-time Streaming** - Named pipe support for output monitoring
+- **SSH Operations** - Automated SSH command execution
+- **Process Monitoring** - Watch for patterns and react to events
+- **Pattern Matching** - Advanced text extraction and classification
+- **Replay Modes & Matchers** - Talkback-style `RecordMode`, `FallbackMode`, and configurable matchers/normalizers
+- **Latency & Error Injection** - Simulate streaming pace or injected failures during replay
+- **Exit Summaries** - Automatic report of new and unused tapes for CI hygiene
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Installation
 
@@ -82,7 +82,7 @@ This opens a guided interface that walks you through all features:
 - Testing and fuzzing
 - Interactive tutorials
 
-## 🎯 Quick Decision Guide
+## Quick Decision Guide
 
 **Choose the right tool for your task:**
 
@@ -97,7 +97,7 @@ This opens a guided interface that walks you through all features:
 | Record a live session | **Recorder** | `Session(..., record=RecordMode.NEW)` |
 | Replay deterministically | **Player** | `Session(..., record=RecordMode.DISABLED, fallback=FallbackMode.NOT_FOUND)` |
 
-## 📚 Core Use Cases
+## Core Use Cases
 
 ### Use Case 1: Discover Unknown Program Interfaces
 
@@ -109,12 +109,12 @@ report = investigate_program("mystery_cli_tool")
 print(report.summary())
 
 # Output:
-# ✓ Found 23 commands
-# ✓ Detected 3 different states/modes
-# ✓ Identified help commands: ['help', '?', '--help']
-# ✓ Exit commands: ['quit', 'exit', 'q']
-# ✓ Data formats: JSON, CSV
-# ✓ Generated complete interface map
+# Found 23 commands
+# Detected 3 different states/modes
+# Identified help commands: ['help', '?', '--help']
+# Exit commands: ['quit', 'exit', 'q']
+# Data formats: JSON, CSV
+# Generated complete interface map
 ```
 
 ### Use Case 2: Thoroughly Test CLI Programs
@@ -126,13 +126,13 @@ from claudecontrol.testing import black_box_test
 results = black_box_test("your_cli_app", timeout=10)
 
 # Tests performed:
-# ✓ Startup behavior
-# ✓ Help system discovery
-# ✓ Invalid input handling
-# ✓ Exit behavior
-# ✓ Resource usage (CPU/memory)
-# ✓ Concurrent session handling
-# ✓ Fuzz testing with edge cases
+# Startup behavior
+# Help system discovery
+# Invalid input handling
+# Exit behavior
+# Resource usage (CPU/memory)
+# Concurrent session handling
+# Fuzz testing with edge cases
 
 print(results["report"])
 ```
@@ -192,7 +192,7 @@ ccontrol run "npm test" --expect "passing"
 ccontrol fuzz target_app --max-inputs 50
 ```
 
-## 🔍 Program Investigation (Main Use Case)
+## Program Investigation (Main Use Case)
 
 ClaudeControl excels at exploring and understanding unknown CLI programs:
 
@@ -264,7 +264,7 @@ for finding in findings:
         print(f"Input caused error: {finding['input']}")
 ```
 
-## 🎮 Core Features
+## Core Features
 
 ### Session Management
 
@@ -295,7 +295,7 @@ match = session.wait_for_regex(r"\d+")       # Regex with match object
 ```python
 from claudecontrol.claude_helpers import test_command
 
-success, error = test_command("npm test", ["✓", "passing"])
+success, error = test_command("npm test", ["passing"])
 if success:
     print("All tests passed!")
 else:
@@ -340,7 +340,7 @@ results = parallel_commands([
 
 for cmd, result in results.items():
     if result["success"]:
-        print(f"✓ {cmd}")
+        print(f"Success: {cmd}")
 ```
 
 ### Command Chains
@@ -397,7 +397,7 @@ with Session("python", tapes_path=tapes_dir,
 Latency policies accept ints, ranges, or callables and fall back to per-tape overrides. Error policies allow probabilistic exit
 code injection or truncated output so CI can harden workflows against flaky behavior.
 
-## 🛡️ Safety Features
+## Safety Features
 
 ClaudeControl prioritizes safety when investigating unknown programs:
 
@@ -408,7 +408,7 @@ ClaudeControl prioritizes safety when investigating unknown programs:
 - **Audit Trail** - All interactions are logged
 - **Zombie Cleanup** - Automatic cleanup of dead processes
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 claudecontrol/
@@ -450,7 +450,7 @@ claudecontrol/
 └── README.md              # This file
 ```
 
-## 📚 Examples
+## Examples
 
 ### Testing Commands
 
@@ -510,7 +510,7 @@ matches = watch_process(
 )
 ```
 
-## 🔧 Configuration
+## Configuration
 
 Configuration file: `~/.claude-control/config.json`
 
@@ -535,7 +535,7 @@ Session data stored in: `~/.claude-control/sessions/`
 Investigation reports saved to: `~/.claude-control/investigations/`
 Replay tapes default to: `./tapes/` (override per session or via `--tapes`).
 
-## 📖 Documentation
+## Documentation
 
 - **[OVERVIEW.md](OVERVIEW.md)** - Detailed explanation of the three core capabilities
 - **[CLAUDE.md](CLAUDE.md)** - Comprehensive guide for Claude Code usage
@@ -544,7 +544,7 @@ Replay tapes default to: `./tapes/` (override per session or via `--tapes`).
 - Run `ccontrol` for interactive tutorials
 - **requirements.md / architecture.md / implementation.md / plan.md** - Talkback-style record & replay specs and rollout plan
 
-## 🌟 Real-World Scenarios
+## Real-World Scenarios
 
 ### When to Use ClaudeControl
 
@@ -609,14 +609,14 @@ results = chain.run()
 - Regression test automation
 - Performance and stress testing
 
-## ⚠️ Known Limits & Best Practices
+## Known Limits & Best Practices
 
 - **Full-screen TTY apps (e.g., `vim`, `top`)** are captured as raw streams; matching works best for line-oriented CLIs.
 - **Filesystem side effects** are out of scope—run recordings in disposable working directories when command output depends on disk state.
 - **Windows PTY support** lags behind POSIX. Use WSL or plan for `wexpect`-style adapters in future releases.
 - **Tape edits** are loaded at session start. Restart tooling after modifying JSON5 tapes to rebuild the index.
 
-## 🐛 Troubleshooting
+## Troubleshooting
 
 ### Enable Debug Logging
 
@@ -661,19 +661,19 @@ ccontrol tapes redact --inplace
 All tape commands honor `--record`, `--fallback`, `--latency`, `--error-rate`, `--summary`, `--silent`, and `--debug` flags so
 you can enforce deterministic replay in CI while still authoring new exchanges locally.
 
-## 📄 License
+## License
 
 MIT License - See LICENSE file for details
 
-## 🙏 Contributing
+## Contributing
 
 Contributions welcome! Please read CONTRIBUTING.md first.
 
-## 📮 Support
+## Support
 
 - GitHub Issues: [Report bugs or request features](https://github.com/anthropics/claude-code/issues)
 - Documentation: See CLAUDE.md for detailed API reference
 
 ---
 
-**ClaudeControl** - Making CLI automation, investigation, testing, and replay systematic 🚀
+**ClaudeControl** - Making CLI automation, investigation, testing, and replay systematic.

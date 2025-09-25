@@ -4,28 +4,28 @@ ClaudeControl is a Python toolkit for understanding, validating, and automating 
 
 ## Core Capabilities
 
-### 1. Investigation 🔍
+### 1. Investigation 
 ClaudeControl explores a target CLI to map out its behaviors:
 - Launches sessions through `Session` helpers to capture prompts, inputs, and outputs automatically.
 - Crawls built-in help, subcommands, and usage patterns.
 - Infers state transitions, environment dependencies, and error pathways.
 - Produces structured reports that document commands, options, and observed outputs so teams can learn a tool quickly.
 
-### 2. Testing 🧪
+### 2. Testing 
 The testing layer hardens CLIs against regressions:
 - Provides black-box tests that exercise startup/shutdown, error handling, and concurrency.
 - Generates fuzz and performance scenarios with seeded randomness for reproducibility.
 - Integrates with `pytest` so suites can be automated in CI.
 - Supplies fixtures and helpers to mix live programs and recorded runs.
 
-### 3. Automation 🤖
+### 3. Automation 
 Automation APIs orchestrate complex terminal workflows:
 - The high-level `Session` abstraction wraps `pexpect` so scripts can `expect`, `send`, and synchronize with prompts.
 - Patterns handle login sequences, pagination, and other interactive flows reliably.
 - Recovery hooks detect timeouts or failures and re-establish state where possible.
 - Automation pipelines can chain multiple CLIs, manage credentials, and coordinate parallel tasks.
 
-### 4. Record & Replay 🎞️
+### 4. Record & Replay 
 New replay functionality mirrors Talkback’s tape model for terminals:
 - Recorder segments live `Session` traffic into exchanges and persists JSON5 “tapes” with timing, prompts, and exit codes.
 - Player streams recorded tapes back through the `Session` transport, optionally falling back to the real program when no match exists.
@@ -59,7 +59,7 @@ New replay functionality mirrors Talkback’s tape model for terminals:
 - **Data Engineers** – Automate database shells, ETL tools, and pipelines with confidence in both live and replayed environments.
 
 ## Philosophy
-1. **Zero Configuration** – Smart defaults get you running instantly, with tapes stored in sensible locations and replay disabled until requested.
+1. **Zero Configuration** – Sensible defaults get you running instantly, with tapes stored in sensible locations and replay disabled until requested.
 2. **Safety First** – Fallback policies, redaction hooks, and tape summaries prevent accidental live runs or leaking secrets.
 3. **Deterministic by Default** – Seeds, latency control, and error injection make tests predictable yet realistic.
 4. **Human-Friendly Artifacts** – JSON5 tapes with annotations, decorators, and pretty-printed text are easy to inspect and review.

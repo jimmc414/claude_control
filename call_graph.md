@@ -404,15 +404,15 @@ def send_with_fallback(session, payload):
 
 | Caller → | core | patterns | investigate | testing | helpers | cli | replay |
 |----------|------|----------|-------------|---------|---------|-----|--------|
-| **core** | - | ✓ | - | - | - | - | ✓ |
+| **core** | - |  | - | - | - | - |  |
 | **patterns** | Weak | - | - | - | - | - | Weak |
-| **investigate** | ✓ | ✓ | - | - | - | - | ✓ |
-| **testing** | ✓ | ✓ | ✓ | - | ✓ | - | ✓ |
-| **helpers** | ✓ | ✓ | ✓ | - | - | - | ✓ |
-| **cli** | ✓ | - | ✓ | ✓ | ✓ | - | ✓ |
-| **replay** | ✓ | - | - | - | - | ✓ | - |
+| **investigate** |  |  | - | - | - | - |  |
+| **testing** |  |  |  | - |  | - |  |
+| **helpers** |  |  |  | - | - | - |  |
+| **cli** |  | - |  |  |  | - |  |
+| **replay** |  | - | - | - | - |  | - |
 
-✓ = Direct function calls between modules
+ = Direct function calls between modules
 Weak = Optional/conditional usage
 
 ### Dependency Flow
