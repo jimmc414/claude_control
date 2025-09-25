@@ -1,8 +1,8 @@
 # ClaudeControl
 
-**Give Claude control of your terminal** - A powerful Python library for three essential CLI tasks:
+**Give Claude control of your terminal** - A powerful Python library for four essential CLI tasks:
 
-## 🎯 Three Core Capabilities
+## 🎯 Four Core Capabilities
 
 ### 1. 🔍 **Discover** - Investigate Unknown Programs
 Automatically explore and understand any CLI tool's interface, commands, and behavior - even without documentation.
@@ -13,9 +13,13 @@ Thoroughly test CLI programs for reliability, error handling, performance, and e
 ### 3. 🤖 **Automate** - Intelligent CLI Interaction
 Create robust automation for any command-line program with session persistence, error recovery, and parallel execution.
 
+### 4. 🎞️ **Record & Replay** - Talkback-Style Session Tapes
+Capture interactive CLI sessions into human-editable JSON5 "tapes" and deterministically replay them with Talkback-style modes,
+matchers, decorators, latency control, and exit summaries.
+
 ---
 
-ClaudeControl excels at all three tasks with zero configuration and intelligent defaults, making it the Swiss Army knife for CLI program interaction.
+ClaudeControl excels at all four tasks with zero configuration and intelligent defaults, making it the Swiss Army knife for CLI program interaction.
 
 ## 📊 What Can ClaudeControl Do?
 
@@ -27,6 +31,7 @@ ClaudeControl excels at all three tasks with zero configuration and intelligent 
 | **Understanding legacy tools** | Reading old docs or source code | Automatic interface mapping |
 | **Parallel CLI operations** | Complex threading code | Simple one-liner |
 | **Monitoring CLI processes** | Constant manual checking | Automated pattern watching |
+| **Recording & Replaying sessions** | Ad-hoc screen captures, brittle mocks | Deterministic JSON5 tapes with Talkback-style controls |
 
 ## ✨ Key Features
 
@@ -42,6 +47,9 @@ ClaudeControl excels at all three tasks with zero configuration and intelligent 
 - **🔐 SSH Operations** - Automated SSH command execution
 - **📈 Process Monitoring** - Watch for patterns and react to events
 - **🎨 Pattern Matching** - Advanced text extraction and classification
+- **🎞️ Replay Modes & Matchers** - Talkback-style `RecordMode`, `FallbackMode`, and configurable matchers/normalizers
+- **⏱️ Latency & Error Injection** - Simulate streaming pace or injected failures during replay
+- **📝 Exit Summaries** - Automatic report of new and unused tapes for CI hygiene
 
 ## 🚀 Quick Start
 
@@ -49,6 +57,14 @@ ClaudeControl excels at all three tasks with zero configuration and intelligent 
 
 ```bash
 pip install -e .
+```
+
+### Enable Record & Replay Support (optional)
+
+Install the additional dependencies that power JSON5 tapes, validation, and cross-platform file locking:
+
+```bash
+pip install -r requirements.txt
 ```
 
 ### Interactive Menu (Recommended for First Time)
@@ -78,6 +94,8 @@ This opens a guided interface that walks you through all features:
 | Run multiple CLIs at once | **Parallel Execution** | `parallel_commands([...])` |
 | Monitor a CLI for errors | **Process Watching** | `watch_process("app", patterns)` |
 | Chain dependent commands | **Command Chains** | `CommandChain()` |
+| Record a live session | **Recorder** | `Session(..., record=RecordMode.NEW)` |
+| Replay deterministically | **Player** | `Session(..., record=RecordMode.DISABLED, fallback=FallbackMode.NOT_FOUND)` |
 
 ## 📚 Core Use Cases
 
@@ -337,6 +355,48 @@ chain.add("npm test", on_success=True)
 results = chain.run()
 ```
 
+### Record & Replay Sessions
+
+```python
+from claudecontrol import Session, RecordMode, FallbackMode
+
+tapes_dir = "./tapes"
+
+# Record live interaction using Talkback-style NEW mode
+with Session("sqlite3", args=["-batch"], tapes_path=tapes_dir,
+             record=RecordMode.NEW, fallback=FallbackMode.PROXY) as session:
+    session.expect("sqlite>")
+    session.sendline("select 1;")
+    session.expect("sqlite>")
+
+# Replay deterministically with strict matching
+with Session("sqlite3", args=["-batch"], tapes_path=tapes_dir,
+             record=RecordMode.DISABLED, fallback=FallbackMode.NOT_FOUND,
+             latency=0, summary=True) as session:
+    session.expect("sqlite>")
+    session.sendline("select 1;")
+    session.expect("sqlite>")
+```
+
+Tapes are human-editable JSON5 artifacts that capture prompts, inputs, chunked outputs with timing, exit codes, annotations, and
+session metadata. Matchers mirror Talkback concepts: allow/ignore lists for env vars and args, pluggable `stdinMatcher` /
+`commandMatcher`, prompt normalization, and optional state hashes. Decorators (`input_decorator`, `output_decorator`,
+`tape_decorator`) enable last-mile transformations, while built-in redaction scrubs secrets by default.
+
+### Latency & Error Simulation
+
+```python
+with Session("python", tapes_path=tapes_dir,
+             record=RecordMode.DISABLED,
+             fallback=FallbackMode.NOT_FOUND,
+             latency=(25, 75),           # ms range per chunk
+             error_rate=5) as session:   # 5% chance to inject replay failure
+    session.expect(">>>")
+```
+
+Latency policies accept ints, ranges, or callables and fall back to per-tape overrides. Error policies allow probabilistic exit
+code injection or truncated output so CI can harden workflows against flaky behavior.
+
 ## 🛡️ Safety Features
 
 ClaudeControl prioritizes safety when investigating unknown programs:
@@ -360,14 +420,29 @@ claudecontrol/
 │   ├── testing.py            # Black box testing framework
 │   ├── interactive_menu.py   # Interactive menu system
 │   ├── cli.py               # Command-line interface
-│   └── exceptions.py        # Custom exceptions
+│   ├── exceptions.py        # Custom exceptions
+│   └── replay/              # Talkback-style record & replay package
+│       ├── __init__.py
+│       ├── modes.py         # RecordMode / FallbackMode enums
+│       ├── model.py         # Tape, Exchange, Chunk dataclasses
+│       ├── store.py         # TapeStore loader + TapeIndex
+│       ├── matchers.py      # Command/env/prompt/stdin matchers
+│       ├── normalize.py     # ANSI strip & volatile value scrubbers
+│       ├── decorators.py    # Input/output/tape decorator hooks
+│       ├── record.py        # Recorder using pexpect.logfile_read
+│       ├── play.py          # Replay transport & latency policies
+│       ├── latency.py       # Latency resolution helpers
+│       ├── errors.py        # Error injection helpers
+│       ├── summary.py       # Exit summary printer
+│       └── redact.py        # Secret detection and masking
 ├── tests/                   # Comprehensive test suite
 │   ├── test_core.py         # Core functionality tests
 │   ├── test_helpers.py      # Helper function tests
 │   ├── test_patterns.py     # Pattern matching tests
 │   ├── test_investigate.py  # Investigation tests
 │   ├── test_testing.py      # Testing framework tests
-│   └── test_integration.py  # Integration tests
+│   ├── test_integration.py  # Integration tests
+│   └── test_replay_*        # Tape model, recorder, player, CLI tests
 ├── backup/
 │   └── examples/            # Example scripts
 ├── docs/                    # Additional documentation
@@ -444,12 +519,21 @@ Configuration file: `~/.claude-control/config.json`
     "session_timeout": 300,
     "max_sessions": 20,
     "auto_cleanup": true,
-    "log_level": "INFO"
+    "log_level": "INFO",
+    "replay": {
+        "tapes_path": "~/claude-control/tapes",
+        "record": "new",
+        "fallback": "not_found",
+        "latency": 0,
+        "error_rate": 0,
+        "summary": true
+    }
 }
 ```
 
 Session data stored in: `~/.claude-control/sessions/`
 Investigation reports saved to: `~/.claude-control/investigations/`
+Replay tapes default to: `./tapes/` (override per session or via `--tapes`).
 
 ## 📖 Documentation
 
@@ -458,6 +542,7 @@ Investigation reports saved to: `~/.claude-control/investigations/`
 - **docs/** - Additional documentation and guides
 - **backup/examples/** - Runnable example scripts
 - Run `ccontrol` for interactive tutorials
+- **requirements.md / architecture.md / implementation.md / plan.md** - Talkback-style record & replay specs and rollout plan
 
 ## 🌟 Real-World Scenarios
 
@@ -504,6 +589,11 @@ results = chain.run()
 - Fuzz testing for vulnerability discovery
 - Automated security scanning workflows
 
+**Release Engineering & CI**
+- Lock deterministic CLI interactions behind Talkback-style tapes
+- Inject latency and failures to harden pipelines before release
+- Enforce tape coverage via exit summaries and validation commands
+
 **Data Engineering**
 - Automate database CLI interactions
 - Test ETL pipeline tools
@@ -518,6 +608,13 @@ results = chain.run()
 - Comprehensive CLI application testing
 - Regression test automation
 - Performance and stress testing
+
+## ⚠️ Known Limits & Best Practices
+
+- **Full-screen TTY apps (e.g., `vim`, `top`)** are captured as raw streams; matching works best for line-oriented CLIs.
+- **Filesystem side effects** are out of scope—run recordings in disposable working directories when command output depends on disk state.
+- **Windows PTY support** lags behind POSIX. Use WSL or plan for `wexpect`-style adapters in future releases.
+- **Tape edits** are loaded at session start. Restart tooling after modifying JSON5 tapes to rebuild the index.
 
 ## 🐛 Troubleshooting
 
@@ -543,6 +640,27 @@ from claudecontrol import cleanup_sessions
 cleaned = cleanup_sessions(max_age_minutes=60)
 ```
 
+### Manage Tape Corpora
+
+```bash
+# Record with live execution (Talkback NEW mode)
+ccontrol rec --tapes ./tapes sqlite3 -batch
+
+# Replay only – fail fast on tape misses (Talkback DISABLED + NOT_FOUND)
+ccontrol play --tapes ./tapes sqlite3 -batch
+
+# Replay with proxy fallback to the real program
+ccontrol proxy --tapes ./tapes sqlite3 -batch
+
+# Inspect and curate tapes
+ccontrol tapes list --unused
+ccontrol tapes validate --strict
+ccontrol tapes redact --inplace
+```
+
+All tape commands honor `--record`, `--fallback`, `--latency`, `--error-rate`, `--summary`, `--silent`, and `--debug` flags so
+you can enforce deterministic replay in CI while still authoring new exchanges locally.
+
 ## 📄 License
 
 MIT License - See LICENSE file for details
@@ -558,4 +676,4 @@ Contributions welcome! Please read CONTRIBUTING.md first.
 
 ---
 
-**ClaudeControl** - Making CLI automation elegant and investigation systematic 🚀
+**ClaudeControl** - Making CLI automation, investigation, testing, and replay systematic 🚀
