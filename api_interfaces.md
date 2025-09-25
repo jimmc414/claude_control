@@ -1,448 +1,264 @@
 # ClaudeControl API & Interface Documentation
 
-## Core Session Interface
-
-### Session Class
-**Purpose:** Primary interface for controlling CLI processes
-**Location:** `src/claudecontrol/core.py`
-
-#### `__init__(command: str, timeout: int = 30, cwd: Optional[str] = None, env: Optional[Dict[str, str]] = None, encoding: str = "utf-8", dimensions: tuple = (24, 80), session_id: Optional[str] = None, persist: bool = True, stream: bool = False)`
-**Purpose:** Create a new session to control a CLI process
-**Parameters:**
-- `command`: Command to execute (required)
-- `timeout`: Default timeout for operations in seconds (default: 30)
-- `cwd`: Working directory for the process
-- `env`: Environment variables dict
-- `encoding`: Character encoding (default: utf-8)
-- `dimensions`: Terminal dimensions (rows, cols)
-- `session_id`: Explicit session ID (auto-generated if None)
-- `persist`: Keep session in global registry for reuse
-- `stream`: Enable named pipe streaming
-
-**Returns:** Session instance
-**Raises:** `ProcessError` if command cannot be spawned
-**Side Effects:** 
-- Spawns external process
-- Creates session directory in `~/.claude-control/sessions/`
-- Registers in global session registry if persist=True
-- Creates named pipe if stream=True
-
-#### `expect(patterns: Union[str, List[str]], timeout: Optional[int] = None) -> int`
-**Purpose:** Wait for output patterns
-**Parameters:**
-- `patterns`: String or list of regex patterns to match
-- `timeout`: Override default timeout
-
-**Returns:** Index of matched pattern
-**Raises:** 
-- `TimeoutError` with recent output if pattern not found
-- `ProcessError` if process dies unexpectedly
-**Side Effects:** Updates last_activity timestamp
-
-#### `send(text: str, delay: float = 0) -> None`
-**Purpose:** Send input to the process
-**Parameters:**
-- `text`: Text to send
-- `delay`: Delay between characters (for slow typing simulation)
-
-**Raises:** `SessionError` if session is not alive
-**Side Effects:** Writes to process stdin, updates activity timestamp
-
-#### `sendline(line: str = "") -> None`
-**Purpose:** Send a line with newline
-**Parameters:**
-- `line`: Text to send (newline automatically appended)
-
-#### `get_recent_output(lines: int = 100) -> str`
-**Purpose:** Get recent output from buffer
-**Returns:** String containing last N lines
-
-#### `get_full_output() -> str`
-**Purpose:** Get all captured output
-**Returns:** Complete output since session start
-
-#### `is_alive() -> bool`
-**Purpose:** Check if process is running
-**Returns:** True if process is alive
-
-#### `close(force: bool = False) -> Optional[int]`
-**Purpose:** Close the session
-**Parameters:**
-- `force`: Force terminate if process won't exit cleanly
-
-**Returns:** Exit status code
-**Side Effects:** 
-- Terminates process
-- Removes from global registry
-- Cleans up named pipe if exists
+This guide describes the primary public surfaces of `claude_control`, covering the core session API, record/replay extensions, supporting utilities, CLI entry points, configuration, and error types. It reflects the Talkback-style recording enhancements while preserving existing automation and investigation capabilities.
 
 ---
 
-## High-Level Helper Functions
+## Core Session Interface (`src/claudecontrol/core.py`)
 
-### `control(command: str, timeout: int = 30, cwd: Optional[str] = None, env: Optional[Dict[str, str]] = None, session_id: Optional[str] = None, reuse: bool = True, with_config: Optional[str] = None, stream: bool = False) -> Session`
-**Purpose:** Get or create a controlled session with reuse support
-**Location:** `src/claudecontrol/core.py`
+### `Session`
+Creates and manages an interactive subprocess controlled through `pexpect`. Replay is optional and off by default; enabling it adds deterministic tape playback and recording.
 
-**Parameters:**
-- `command`: Command to execute
-- `timeout`: Default timeout
-- `cwd`: Working directory
-- `env`: Environment variables
-- `session_id`: Explicit session ID
-- `reuse`: Reuse existing session with same command if available
-- `with_config`: Load from saved configuration
-- `stream`: Enable streaming via named pipe
-
-**Returns:** Session instance (new or existing)
-**Side Effects:** May reuse existing session from registry
-
-### `run(command: str, expect: Optional[Union[str, List[str]]] = None, send: Optional[str] = None, timeout: int = 30, cwd: Optional[str] = None, env: Optional[Dict[str, str]] = None) -> str`
-**Purpose:** One-liner to run a command and get output
-**Location:** `src/claudecontrol/core.py`
-
-**Returns:** Captured output as string
-**Raises:** `TimeoutError` if command doesn't complete
-**Side Effects:** Process is spawned and terminated
-
----
-
-## Investigation Interface
-
-### `investigate_program(program: str, timeout: int = 10, safe_mode: bool = True, save_report: bool = True) -> InvestigationReport`
-**Purpose:** Automatically investigate an unknown CLI program
-**Location:** `src/claudecontrol/investigate.py`
-
-**Parameters:**
-- `program`: Program command to investigate
-- `timeout`: Timeout for each probe operation
-- `safe_mode`: Block potentially dangerous commands
-- `save_report`: Save JSON report to disk
-
-**Returns:** `InvestigationReport` object with findings
-**Side Effects:**
-- Spawns and interacts with target program
-- Saves report to `~/.claude-control/investigations/` if save_report=True
-
-### InvestigationReport Structure
 ```python
-{
-    "program": "string",
-    "started_at": "datetime",
-    "completed_at": "datetime",
-    "states": {
-        "state_name": {
-            "name": "string",
-            "prompt": "string",
-            "commands": ["list"],
-            "transitions": {"command": "next_state"}
-        }
-    },
-    "commands": {
-        "command": {
-            "description": "string",
-            "tested": true,
-            "output_length": 123
-        }
-    },
-    "prompts": ["detected", "prompts"],
-    "help_commands": ["help", "?"],
-    "exit_commands": ["quit", "exit"],
-    "data_formats": ["JSON", "CSV"],
-    "safety_notes": ["warnings"]
-}
+Session(
+    command: str,
+    timeout: int = 30,
+    cwd: Optional[str] = None,
+    env: Optional[Dict[str, str]] = None,
+    encoding: str = "utf-8",
+    dimensions: tuple[int, int] = (24, 80),
+    session_id: Optional[str] = None,
+    persist: bool = True,
+    stream: bool = False,
+    *,
+    replay: bool = False,
+    tapes_path: Optional[str] = None,
+    record: RecordMode = RecordMode.DISABLED,
+    fallback: FallbackMode = FallbackMode.NOT_FOUND,
+    summary: bool = True,
+    name: Optional[str] = None,
+    tape_name_generator: Optional[TapeNameGenerator] = None,
+    allow_env: Optional[List[str]] = None,
+    ignore_env: Optional[List[str]] = None,
+    ignore_args: Optional[List[Union[int, str]]] = None,
+    ignore_stdin: bool = False,
+    stdin_matcher: Optional[StdinMatcher] = None,
+    command_matcher: Optional[CommandMatcher] = None,
+    input_decorator: Optional[InputDecorator] = None,
+    output_decorator: Optional[OutputDecorator] = None,
+    tape_decorator: Optional[TapeDecorator] = None,
+    latency: Union[int, tuple[int, int], Callable] = 0,
+    error_rate: Union[int, Callable] = 0,
+)
 ```
 
----
+**Key parameters**
+- **Core execution:** `command`, `timeout`, `cwd`, `env`, `encoding`, `dimensions` describe the subprocess to spawn and its terminal geometry.【F:src/claudecontrol/core.py†L44-L91】
+- **Session identity:** `session_id`, `persist`, and `name` control lifecycle tracking via the global registry and optional naming for summaries.【F:src/claudecontrol/core.py†L60-L115】
+- **Streaming:** `stream=True` creates a named pipe that mirrors input/output events and tags errors using compiled regexes.【F:src/claudecontrol/core.py†L118-L220】
+- **Replay root:** `replay=True` switches the initial transport to tape playback when `record` is disabled; otherwise live processes are spawned and optionally recorded to `tapes_path` (defaults to `./tapes`).【F:src/claudecontrol/core.py†L196-L224】【F:src/claudecontrol/core.py†L231-L276】
+- **Record & fallback modes:** `record` selects how new exchanges are persisted (`NEW`, `OVERWRITE`, `DISABLED`), while `fallback` dictates behavior on tape misses (`NOT_FOUND` raises, `PROXY` runs the real program).【F:src/claudecontrol/core.py†L69-L88】【F:src/claudecontrol/core.py†L296-L352】
+- **Matching controls:** `allow_env`, `ignore_env`, `ignore_args`, `ignore_stdin`, `stdin_matcher`, and `command_matcher` customize key construction when resolving exchanges, mirroring Talkback’s matcher knobs.【F:src/claudecontrol/core.py†L92-L111】【F:src/claudecontrol/replay/store.py†L112-L204】
+- **Decorators & normalization:** `input_decorator`, `output_decorator`, and `tape_decorator` hook into recording to mutate payloads, redact data, or tag metadata.【F:src/claudecontrol/core.py†L104-L110】【F:src/claudecontrol/replay/record.py†L53-L194】
+- **Simulation:** `latency` and `error_rate` configure synthetic pacing and probabilistic error injection for playback, with per-tape overrides available in metadata.【F:src/claudecontrol/core.py†L86-L89】【F:src/claudecontrol/replay/play.py†L19-L105】
+- **Summary:** `summary=True` prints a Talkback-style exit report listing new and unused tapes when the session closes.【F:src/claudecontrol/core.py†L602-L640】
 
-## Testing Interface
+**Side effects**
+- Spawns a `pexpect.spawn` process or a `ReplayTransport` surrogate.
+- Registers the session globally when `persist=True`.
+- Initializes a `TapeStore`, builds tape indexes, and attaches a `Recorder` when recording is enabled.【F:src/claudecontrol/core.py†L200-L233】【F:src/claudecontrol/replay/record.py†L59-L133】
 
-### `black_box_test(program: str, timeout: int = 10, save_report: bool = True) -> Dict[str, Any]`
-**Purpose:** Run comprehensive black-box tests on a CLI program
-**Location:** `src/claudecontrol/testing.py`
+### Core Methods
+- `send(text: str, delay: float = 0) -> None`: Sends raw input. When replay is active, resolves the exchange against tapes and either streams recorded output or proxies to a live child on misses (per fallback). Live sessions optionally record the exchange and can simulate slow typing via `delay`.【F:src/claudecontrol/core.py†L320-L372】
+- `sendline(line: str = "") -> None`: Convenience wrapper adding a newline; records exchanges when live sessions are capturing.【F:src/claudecontrol/core.py†L374-L383】
+- `expect(patterns, timeout=None, searchwindowsize=None) -> int`: Waits for regex patterns. Works against both live `pexpect` children and the replay transport. Records exchange completions, captures exit codes, and retries intelligently on timeouts before raising `TimeoutError`.【F:src/claudecontrol/core.py†L385-L479】
+- `expect_exact(patterns, timeout=None) -> int`: Exact-string variant delegating to `pexpect.expect_exact` or replay search; returns matched index.【F:src/claudecontrol/core.py†L481-L527】
+- `get_recent_output(lines: int = 100) -> str` and `get_full_output() -> str`: Read buffered output maintained via `_OutputCapture` (used for both logging and recording).【F:src/claudecontrol/core.py†L118-L188】【F:src/claudecontrol/core.py†L528-L589】
+- `is_alive() -> bool`: Indicates whether the underlying transport is active, handling both live and replay children.【F:src/claudecontrol/core.py†L544-L589】
+- `close(force: bool = False) -> Optional[int]`: Terminates the session, flushes pending recorder data, and prints the exit summary exactly once when enabled.【F:src/claudecontrol/core.py†L590-L640】
+- `interact() -> None`: Hands terminal control to the operator for ad-hoc debugging across live and replay sessions.【F:src/claudecontrol/core.py†L642-L660】
+- `save_state() -> Dict[str, Any]`: Persists session metadata (including PID, command, recent output counts) under `~/.claude-control/sessions/<id>/state.json`.【F:src/claudecontrol/core.py†L662-L705】
+- `save_program_config(name: str, include_output: bool = False) -> None`: Serializes an interaction template for reuse, automatically deriving expect sequences from recorded history.【F:src/claudecontrol/core.py†L707-L780】
 
-**Parameters:**
-- `program`: Program to test
-- `timeout`: Timeout for each test
-- `save_report`: Save test report to disk
-
-**Returns:**
-```python
-{
-    "program": "string",
-    "results": [
-        {
-            "test": "startup|help|invalid_input|exit|resource|concurrent|fuzz",
-            "passed": true,
-            "details": {},
-            "error": "string if failed"
-        }
-    ],
-    "report": "Human-readable report string",
-    "report_path": "/path/to/saved/report.json"
-}
-```
-
-**Side Effects:**
-- Spawns multiple instances of target program
-- Creates various test inputs including fuzz data
-- Monitors resource usage
-- Saves report to `~/.claude-control/test-reports/`
+### Convenience Helpers (`src/claudecontrol/core.py`)
+- `control(...) -> Session`: Retrieves or creates a persistent session matching the command and configuration, reusing active sessions when `reuse=True`.
+- `run(...) -> str`: Executes a one-off command, optionally expecting and sending scripted input before returning the final output.
 
 ---
 
-## Helper Function Interfaces
+## Replay Subsystem (`src/claudecontrol/replay/`)
 
-### `test_command(command: str, expected_output: Union[str, List[str]], timeout: int = 30, cwd: Optional[str] = None) -> Tuple[bool, Optional[str]]`
-**Purpose:** Test if a command produces expected output
-**Location:** `src/claudecontrol/claude_helpers.py`
+### Modes & Matching
+- `RecordMode` (`modes.py`): `NEW`, `OVERWRITE`, `DISABLED` determine how new exchanges are persisted when recording.【F:src/claudecontrol/replay/modes.py†L1-L22】
+- `FallbackMode` (`modes.py`): `NOT_FOUND` raises on misses; `PROXY` executes the real program without saving when `record` is disabled.【F:src/claudecontrol/replay/modes.py†L14-L22】
+- `MatchingContext` (`matchers.py`): Captures program, args, environment, CWD, and prompt for deterministic lookups.【F:src/claudecontrol/replay/matchers.py†L7-L23】
+- `StdinMatcher` / `CommandMatcher`: Callables customizing stdin and argv comparisons; defaults normalize ANSI, whitespace, timestamps, and trailing newlines.【F:src/claudecontrol/replay/matchers.py†L25-L43】
+- `KeyBuilder` (`store.py`): Normalizes commands, env vars, prompts, and stdin into deterministic keys for the tape index and handles allow/ignore lists and stdin omission.【F:src/claudecontrol/replay/store.py†L95-L204】
 
-**Returns:** Tuple of `(success, error_message)` where `error_message` is `None` when all expected outputs are found
-**Error Handling:** Returns `(False, str(e))` on any exception
+### Data Model (`model.py`)
+- `TapeMeta`: Program metadata, environment snapshot, terminal geometry, latency/error overrides, optional tag/seed.【F:src/claudecontrol/replay/model.py†L27-L43】
+- `Chunk`, `IOInput`, `IOOutput`, `Exchange`, `Tape`: Represent structured terminal exchanges with chunked output (delay + base64 payload) and optional exit annotations.【F:src/claudecontrol/replay/model.py†L1-L26】【F:src/claudecontrol/replay/model.py†L45-L55】
 
-### `interactive_command(command: str, interactions: List[Dict[str, str]], timeout: int = 30, cwd: Optional[str] = None) -> str`
-**Purpose:** Run command with scripted interactions
+### Decorators & Policies
+- `InputDecorator`, `OutputDecorator`, `TapeDecorator` allow byte-level transformation of inputs, outputs, or metadata; `compose_decorators` chains them left-to-right.【F:src/claudecontrol/replay/decorators.py†L1-L17】
+- `resolve_latency(config, ctx)` resolves constant, range, or callable latency specs to milliseconds.【F:src/claudecontrol/replay/latency.py†L1-L16】
+- `should_inject_error(config, ctx)` probabilistically raises `TapeMissError` to simulate faults according to global or per-tape rates.【F:src/claudecontrol/replay/errors.py†L1-L16】【F:src/claudecontrol/replay/play.py†L57-L100】
+- `redact_bytes` (`redact.py`) scrubs sensitive tokens and password patterns before persistence and during mass redaction passes.【F:src/claudecontrol/replay/redact.py†L1-L31】
+- Normalizers in `normalize.py` strip ANSI sequences, collapse whitespace, and scrub volatile tokens for consistent matching.【F:src/claudecontrol/replay/normalize.py†L1-L27】
 
-**Parameters:**
-- `interactions`: List of dicts with "expect" and "send" keys
-  ```python
-  [
-      {"expect": "login:", "send": "admin"},
-      {"expect": "password:", "send": "secret", "delay": 0.5}
-  ]
-  ```
+### TapeStore & Utilities (`store.py`)
+- `TapeStore(root: Path)`: Loads JSON5 tapes, validates schema, tracks usage, and writes updated tapes atomically with file locking.【F:src/claudecontrol/replay/store.py†L69-L176】【F:src/claudecontrol/replay/store.py†L205-L261】
+  - `load_all()` / `iter_tapes()` enumerate `*.json5` tapes recursively.
+  - `build_index(builder)` constructs normalized key maps and secondary prompt buckets for fuzzy matching.【F:src/claudecontrol/replay/store.py†L130-L189】
+  - `find_matches(builder, ctx, stdin)` resolves candidate exchanges given the current context and input payload.【F:src/claudecontrol/replay/store.py†L191-L233】
+  - `write_tape(path, tape, mark_new=True)` performs atomic writes with `portalocker` and temp files, updating in-memory caches and marking newly created tapes for the exit summary.【F:src/claudecontrol/replay/store.py†L235-L275】
+  - `validate(strict=False)` runs JSON schema validation (strict mode enforces exchange shape) returning `(path, error)` tuples.【F:src/claudecontrol/replay/store.py†L287-L311】
+  - `redact_all(inplace=False)` scans inputs and outputs for redactable secrets and optionally rewrites files in place.【F:src/claudecontrol/replay/store.py†L313-L358】
 
-**Returns:** Full output from session
+### Recorder (`record.py`)
+- Captures terminal output via a composite `logfile_read` writer that tees into `ChunkSink` while preserving existing logging behavior.【F:src/claudecontrol/replay/record.py†L19-L74】
+- `on_send(...)` snapshots decorated input payloads and prompt context, resetting the sink for a new exchange.【F:src/claudecontrol/replay/record.py†L94-L144】
+- `on_exchange_end(...)` builds an `Exchange`, applies output decorators, and queues it for persistence with duration metadata.【F:src/claudecontrol/replay/record.py†L146-L194】
+- `finalize(store)` reconciles pending exchanges with existing tapes according to `RecordMode`, performing overwrites or appends and writing JSON5 artifacts via the shared `TapeStore`. Callers invoke this during `Session.close()`.【F:src/claudecontrol/replay/record.py†L196-L233】
 
-### `parallel_commands(commands: List[str], timeout: int = 30, max_concurrent: int = 10) -> Dict[str, Dict[str, Any]]`
-**Purpose:** Execute multiple commands in parallel
+### ReplayTransport (`play.py`)
+- Acts as a drop-in stand-in for `pexpect.spawn` when replaying tapes. `send`/`sendline` look up matches via `TapeStore`, stream recorded chunks (respecting latency/error policies), and surface exit codes and buffers compatible with `expect` and `expect_exact`.【F:src/claudecontrol/replay/play.py†L17-L118】
+- Maintains `before`, `after`, and `match` attributes mirroring `pexpect` semantics for downstream consumers.【F:src/claudecontrol/replay/play.py†L30-L105】
 
-**Returns:**
-```python
-{
-    "command1": {
-        "success": true,
-        "output": "string",
-        "error": null
-    },
-    "command2": {
-        "success": false,
-        "output": null,
-        "error": "error message"
-    }
-}
-```
+### Summary Reporter (`summary.py`)
+- `print_summary(store)` emits Talkback-style summaries of new tapes and unused tapes at shutdown when `Session.summary` is `True`. The recorder marks new writes; the replay transport marks used entries during playback.【F:src/claudecontrol/replay/summary.py†L1-L22】【F:src/claudecontrol/replay/store.py†L262-L269】
 
-### `watch_process(command: str, watch_for: Union[str, List[str]], callback: Optional[callable] = None, timeout: int = 300, cwd: Optional[str] = None) -> List[str]`
-**Purpose:** Monitor process for specific patterns
-
-**Parameters:**
-- `callback`: Function called with (session, pattern) when pattern found
-
-**Returns:** List of matched patterns
-**Side Effects:** Callback execution on pattern match
+### Exceptions (`replay/exceptions.py`)
+- `ReplayError` base class.
+- `TapeMissError`: raised on unmatched input during playback or deliberate error injection.【F:src/claudecontrol/replay/exceptions.py†L1-L13】
+- `SchemaError`: indicates schema validation failures.
+- `RedactionError`: surfaces unrecoverable masking issues.【F:src/claudecontrol/replay/exceptions.py†L15-L19】
 
 ---
 
-## Pattern Matching Interface
+## High-Level Helper Functions & Utilities
 
-### `extract_json(output: str) -> Optional[Union[dict, list]]`
-**Purpose:** Extract and parse JSON from text
-**Location:** `src/claudecontrol/patterns.py`
+### Automation Helpers (`src/claudecontrol/claude_helpers.py`)
+- `interactive_command(command, interactions, timeout=30, cwd=None) -> str`: Runs scripted expect/send sequences and returns the combined output.
+- `parallel_commands(commands, timeout=30, max_concurrent=10) -> Dict[str, Dict[str, Any]]`: Executes multiple commands concurrently, returning success/error status per command.
+- `watch_process(command, watch_for, callback=None, timeout=300, cwd=None) -> List[str]`: Monitors output for patterns and optionally invokes `callback(session, pattern)` when matches occur.
+- `test_command(command, expected_output, timeout=30, cwd=None) -> Tuple[bool, Optional[str]]`: Validates that expected patterns appear, returning `(False, error)` on failure.
 
-**Returns:** Parsed JSON object or None
-
-### `detect_prompt_pattern(output: str) -> Optional[str]`
-**Purpose:** Detect command prompt pattern
-**Returns:** Prompt pattern or None
-
-### `is_error_output(output: str) -> bool`
-**Purpose:** Check if output contains error indicators
-**Returns:** True if errors detected
-
-### `classify_output(output: str) -> Dict[str, Any]`
-**Purpose:** Classify output characteristics
-
-**Returns:**
-```python
-{
-    "is_error": bool,
-    "data_formats": ["JSON", "XML"],
-    "has_prompt": bool,
-    "state_transition": "state_name or None",
-    "line_count": int,
-    "has_table": bool,
-    "has_json": bool
-}
-```
+### Pattern Utilities (`src/claudecontrol/patterns.py`)
+- `extract_json(output) -> Optional[Union[dict, list]]`: Parses embedded JSON.
+- `detect_prompt_pattern(output) -> Optional[str]`: Heuristically discovers prompt strings.
+- `is_error_output(output) -> bool`: Uses curated regexes to identify error conditions.
+- `classify_output(output) -> Dict[str, Any]`: Summarizes structure (data formats, prompt presence, table detection, etc.).
 
 ---
 
-## Command Chain Interface
+## Investigation & Testing Interfaces
 
-### CommandChain Class
-**Location:** `src/claudecontrol/claude_helpers.py`
+### Investigation (`src/claudecontrol/investigate.py`)
+- `investigate_program(program, timeout=10, safe_mode=True, save_report=True) -> InvestigationReport`: Automatically probes unknown CLIs, mapping states, prompts, transitions, help commands, and data formats. Reports save to `~/.claude-control/investigations/` when enabled.
+- `InvestigationReport`: Contains session metadata, discovered states, commands, prompts, safety notes, and optional JSON serialization for downstream analysis.
 
-#### `add(command: str, expect: Optional[str] = None, send: Optional[str] = None, condition: Optional[callable] = None, on_success: bool = False, on_failure: bool = False)`
-**Purpose:** Add command to chain
-
-**Parameters:**
-- `condition`: Function(results) -> bool to determine if command should run
-- `on_success`: Only run if previous command succeeded
-- `on_failure`: Only run if previous command failed
-
-#### `run() -> List[Dict[str, Any]]`
-**Purpose:** Execute the command chain
-
-**Returns:**
-```python
-[
-    {
-        "command": "string",
-        "output": "string",
-        "success": true,
-        "error": null
-    }
-]
-```
+### Testing (`src/claudecontrol/testing.py`)
+- `black_box_test(program, timeout=10, save_report=True) -> Dict[str, Any]`: Performs startup/help/error/fuzz/concurrency/resource scenarios, returning structured results and optionally persisting a report under `~/.claude-control/test-reports/`.
 
 ---
 
-## CLI Interface
+## CLI (`ccontrol` entry point)
 
-### Command Line Tools
-**Entry Point:** `ccontrol` or `claude-control`
-
-#### Interactive Menu
+### Interactive Menu
 ```bash
-ccontrol  # Opens interactive menu
+ccontrol
+```
+Opens the guided menu-driven interface for session management, automation, and reporting.
+
+### Command Groups
+
+#### Core automation
+```bash
+ccontrol run "command" [--expect PATTERN] [--send TEXT] [--timeout 30] [--output file] [--keep-alive]
+ccontrol investigate PROGRAM [--timeout 10] [--unsafe] [--no-save]
+ccontrol probe PROGRAM [--timeout 5] [--json]
+ccontrol fuzz PROGRAM [--max-inputs 50] [--timeout 5]
+ccontrol learn PROGRAM [--timeout 10]
 ```
 
-#### Direct Commands
+#### Session management
 ```bash
-# Run command
-ccontrol run "command" [--expect "pattern"] [--timeout 30]
-
-# Investigate program
-ccontrol investigate program_name [--timeout 10] [--no-save]
-
-# Probe interface
-ccontrol probe program_name [--json] [--timeout 5]
-
-# Fuzz test
-ccontrol fuzz program_name [--max-inputs 50] [--timeout 5]
-
-# Session management
-ccontrol list  # List active sessions
-ccontrol status  # System status
-ccontrol attach session_id  # Attach to session
-ccontrol clean [--force]  # Clean up sessions
-
-# Configuration
+ccontrol list [--all] [--json]
+ccontrol status
+ccontrol attach SESSION_ID
+ccontrol clean [--force]
 ccontrol config list
-ccontrol config show config_name
-ccontrol config delete config_name
+ccontrol config show NAME
+ccontrol config delete NAME
 ```
+
+#### Replay workflows
+```bash
+ccontrol rec   [--tapes DIR] [--record new|overwrite|disabled] [--fallback not_found|proxy]
+              [--latency MS|MIN,MAX] [--error-rate PCT] [--summary/--no-summary] PROGRAM [ARGS...]
+ccontrol play  [--tapes DIR] [--fallback not_found|proxy] [--latency ...] [--error-rate ...]
+              PROGRAM [ARGS...]
+ccontrol proxy [--tapes DIR] [--record ...] [--latency ...] [--error-rate ...] PROGRAM [ARGS...]
+```
+`rec` launches a live session with recording enabled (`NEW` by default). `play` disables recording and relies exclusively on tapes, failing on misses unless `--fallback proxy` is specified. `proxy` replays when possible and proxies to live execution on misses while still honoring the selected record mode.【F:src/claudecontrol/cli.py†L1-L126】
+
+#### Tape utilities
+```bash
+ccontrol tapes list [--tapes DIR] [--used] [--unused]
+ccontrol tapes validate [--tapes DIR] [--strict]
+ccontrol tapes redact [--tapes DIR] [--inplace]
+ccontrol tapes diff [--tapes DIR] LEFT.json5 RIGHT.json5 [--ignore-ansi] [--collapse-ws]
+```
+These commands surface TapeStore capabilities: listing exchange counts, schema validation, redaction previews or rewrites, and normalized diffs between tapes.【F:src/claudecontrol/cli.py†L128-L226】
 
 ---
 
-## Configuration Interface
+## Configuration (`~/.claude-control/config.json`)
 
-### Session Configuration
-**Location:** `~/.claude-control/config.json`
+Global defaults are loaded via `_load_config()` and merged with runtime parameters.【F:src/claudecontrol/core.py†L19-L72】
 
 ```json
 {
-    "session_timeout": 300,
-    "max_sessions": 20,
-    "auto_cleanup": true,
-    "log_level": "INFO",
-    "output_limit": 10000,
-    "max_session_runtime": 3600,
-    "max_output_size": 104857600
+  "session_timeout": 300,
+  "max_sessions": 20,
+  "auto_cleanup": true,
+  "log_level": "INFO",
+  "output_limit": 10000,
+  "max_session_runtime": 3600,
+  "max_output_size": 104857600,
+  "replay": {
+    "tapes_path": "~/claude-control/tapes",
+    "record": "new",
+    "fallback": "not_found",
+    "latency": 0,
+    "error_rate": 0,
+    "summary": true
+  }
 }
 ```
-
-### Program Configuration
-**Save:** `Session.save_program_config(name: str, include_output: bool = False)`
-**Load:** `Session.from_config(name: str, **kwargs)`
-
-**Structure:**
-```json
-{
-    "name": "string",
-    "command_template": "string",
-    "expect_sequences": [],
-    "success_indicators": [],
-    "ready_indicators": [],
-    "typical_timeout": 30,
-    "notes": "string",
-    "sample_output": []
-}
-```
+Values in the `replay` section provide defaults for CLI invocations and programmatic sessions but are overridden by explicit arguments.
 
 ---
 
 ## Error Handling
 
-### Exception Types
+### Core Exceptions (`src/claudecontrol/exceptions.py`)
+- `SessionError`: Raised for invalid session states (e.g., sending to a closed process).
+- `TimeoutError`: Produced when `expect` fails within the deadline; includes recent output for diagnostics.
+- `ProcessError`: Indicates spawn failures or unexpected process exits; typically surfaced with command context.
+- `ConfigNotFoundError`: Raised when requested stored configurations are missing.
 
-#### `SessionError`
-**When:** Session-related errors (not alive, not found, etc.)
-**Message includes:** Session ID and state
+### Replay Exceptions (`src/claudecontrol/replay/exceptions.py`)
+- `ReplayError`: Base class for replay-specific failures.
+- `TapeMissError`: Thrown on unmatched inputs during playback or injected errors based on `error_rate`.
+- `SchemaError`: Indicates invalid tape structure when loading or validating.
+- `RedactionError`: Signals that automatic masking could not be applied safely.
 
-#### `TimeoutError`
-**When:** Pattern not found within timeout
-**Message includes:** Expected patterns and recent output (last 50 lines)
-
-#### `ProcessError`
-**When:** Process spawn failure or unexpected death
-**Message includes:** Command and exit status
-
-#### `ConfigNotFoundError`
-**When:** Requested configuration doesn't exist
-**Message includes:** Config name and path
+These exceptions propagate through both the library API and CLI commands, enabling deterministic handling in automated workflows.【F:src/claudecontrol/replay/exceptions.py†L1-L19】【F:src/claudecontrol/core.py†L231-L352】
 
 ---
 
-## State Management
+## Tape Summary & Reporting
 
-### Session Registry
-- **Global registry:** In-memory dict of active sessions
-- **Thread-safe:** Protected by threading lock
-- **Automatic cleanup:** On program exit if auto_cleanup=True
-- **Reuse logic:** Matches by command string and alive status
-
-### Session Persistence
-- **Session logs:** `~/.claude-control/sessions/{id}/output.log`
-- **Rotation:** Automatic at 10MB
-- **State file:** `~/.claude-control/sessions/{id}/state.json`
-
-### Named Pipes (Streaming)
-- **Location:** `/tmp/claudecontrol/{session_id}.pipe`
-- **Format:** `[timestamp][TYPE] data\n`
-- **Types:** MTX (metadata), OUT (output), ERR (error), IN (input)
-- **Cleanup:** Automatic on session close
+When `summary=True`, closing a session invokes `print_summary`, showing newly written tapes and tapes that were loaded but unused—mirroring Talkback’s exit report. Tapes are marked as used during replay and as new when written, ensuring accurate bookkeeping across multiple sessions.【F:src/claudecontrol/core.py†L602-L640】【F:src/claudecontrol/replay/summary.py†L1-L22】
 
 ---
 
-## Performance Considerations
+## Testing Guidance
 
-### Limits & Defaults
-- **Max concurrent sessions:** 20 (configurable)
-- **Output buffer:** 10,000 lines in memory
-- **Session timeout:** 300 seconds of inactivity
-- **Operation timeout:** 30 seconds default
-- **Max runtime:** 3600 seconds per session
-- **Log rotation:** 10MB per file
+The record/replay system is exercised by unit tests for normalization, matching, recording, and playback, along with integration tests that cover real CLI sessions (e.g., `sqlite3`, `python -q`, `git`). The CLI smoke tests mirror typical `rec`, `play`, and `proxy` flows to guarantee parity with Talkback semantics. Consult the `tests/` directory for concrete examples of authoring and replaying tapes under different modes.
 
-### Threading
-- **Parallel execution:** ThreadPoolExecutor for parallel_commands
-- **Thread safety:** Global registry protected by lock
-- **Blocking operations:** expect() blocks until pattern or timeout
+---
 
-### Resource Management
-- **Zombie cleanup:** Automatic via psutil
-- **Memory limits:** Configurable output buffer size
-- **File handles:** Automatic cleanup on session close
-- **Process limits:** Enforced by max_sessions config
+This document should serve as a single reference for both existing automation APIs and the newly integrated Talkback-style recording features.
