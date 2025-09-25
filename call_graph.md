@@ -162,7 +162,7 @@ graph TD
 ```mermaid
 graph TD
     subgraph SessionCreation ["Session Creation"]
-        control_func[control()]
+        control_func[control]
         find[find_session]
         new[Session.__init__]
         init_transport[Session._initialize_transport]
