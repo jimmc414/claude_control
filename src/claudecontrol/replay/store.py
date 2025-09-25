@@ -134,21 +134,64 @@ class KeyBuilder:
         ignore_env: Optional[Iterable[str]] = None,
         stdin_matcher=default_stdin_matcher,
         command_matcher=default_command_matcher,
+        ignore_args: Optional[Iterable[int | str]] = None,
+        ignore_stdin: bool = False,
     ) -> None:
         self.allow_env = list(allow_env) if allow_env else None
         self.ignore_env = list(ignore_env) if ignore_env else None
         self.stdin_matcher = stdin_matcher
         self.command_matcher = command_matcher
+        self.ignore_stdin = ignore_stdin
+        ignore_args = list(ignore_args) if ignore_args else []
+        self._ignore_arg_indices = {int(item) for item in ignore_args if isinstance(item, int)}
+        self._ignore_arg_values = {str(item) for item in ignore_args if isinstance(item, str)}
 
+    # ------------------------------------------------------------------ helpers
+    def filter_env_values(self, env: Dict[str, str]) -> Dict[str, str]:
+        return filter_env(env, self.allow_env, self.ignore_env)
+
+    def _filtered_args(self, args: Iterable[str]) -> List[str]:
+        filtered: List[str] = []
+        for index, value in enumerate(args):
+            if index in self._ignore_arg_indices:
+                continue
+            if value in self._ignore_arg_values:
+                continue
+            filtered.append(value)
+        return filtered
+
+    def _prompt_signature(self, prompt: Optional[str]) -> str:
+        return strip_ansi(prompt or "")
+
+    def command_for_tape(self, tape: Tape) -> List[str]:
+        return [tape.meta.program, *self._filtered_args(tape.meta.args)]
+
+    def command_for_context(self, ctx: MatchingContext) -> List[str]:
+        return [ctx.program, *self._filtered_args(ctx.args)]
+
+    def stdin_for_exchange(self, exchange: Exchange) -> bytes:
+        if self.ignore_stdin:
+            return b""
+        return _input_to_bytes(exchange.input)
+
+    def stdin_for_payload(self, payload: bytes) -> bytes:
+        if self.ignore_stdin:
+            return b""
+        return payload
+
+    def _stdin_key(self, data: bytes) -> bytes:
+        if self.ignore_stdin:
+            return b""
+        return data.rstrip(b"\r\n")
+
+    # ------------------------------------------------------------------ key building
     def build_key(self, tape: Tape, exchange: Exchange) -> Tuple:
-        env = filter_env(tape.meta.env, self.allow_env, self.ignore_env)
-        env_items = tuple(sorted(env.items()))
-        command = [tape.meta.program, *tape.meta.args]
-        prompt = strip_ansi((exchange.pre or {}).get("prompt", "") or "")
-        stdin = _input_to_bytes(exchange.input).rstrip(b"\r\n")
+        env_items = tuple(sorted(self.filter_env_values(tape.meta.env).items()))
+        command = tuple(self.command_for_tape(tape))
+        prompt = self._prompt_signature((exchange.pre or {}).get("prompt"))
+        stdin = self._stdin_key(self.stdin_for_exchange(exchange))
         return (
-            tape.meta.program,
-            tuple(command),
+            command,
             env_items,
             tape.meta.cwd,
             prompt,
@@ -156,17 +199,32 @@ class KeyBuilder:
         )
 
     def context_key(self, ctx: MatchingContext, stdin: bytes) -> Tuple:
-        env = filter_env(ctx.env, self.allow_env, self.ignore_env)
-        env_items = tuple(sorted(env.items()))
-        command = [ctx.program, *ctx.args]
-        prompt = strip_ansi(ctx.prompt or "")
+        env_items = tuple(sorted(self.filter_env_values(ctx.env).items()))
+        command = tuple(self.command_for_context(ctx))
+        prompt = self._prompt_signature(ctx.prompt)
+        stdin_key = self._stdin_key(self.stdin_for_payload(stdin))
         return (
-            ctx.program,
-            tuple(command),
+            command,
             env_items,
             ctx.cwd,
             prompt,
-            stdin.rstrip(b"\r\n"),
+            stdin_key,
+        )
+
+    def bucket_key(self, tape: Tape, exchange: Exchange) -> Tuple:
+        prompt = self._prompt_signature((exchange.pre or {}).get("prompt"))
+        return (
+            tape.meta.program,
+            tape.meta.cwd,
+            prompt,
+        )
+
+    def bucket_context_key(self, ctx: MatchingContext) -> Tuple:
+        prompt = self._prompt_signature(ctx.prompt)
+        return (
+            ctx.program,
+            ctx.cwd,
+            prompt,
         )
 
 
@@ -179,11 +237,15 @@ class TapeStore:
         self.paths: List[Path] = []
         self.used: set[Path] = set()
         self.new: set[Path] = set()
+        self._index: Dict[Tuple, List[Tuple[int, int]]] = {}
+        self._buckets: Dict[Tuple, List[Tuple[int, int]]] = {}
 
     # ------------------------------------------------------------------ loading
     def load_all(self) -> None:
         self.tapes.clear()
         self.paths.clear()
+        self._index.clear()
+        self._buckets.clear()
         if not self.root.exists():
             return
         for path in sorted(self.root.rglob("*.json5")):
@@ -192,13 +254,55 @@ class TapeStore:
             self.paths.append(path)
 
     # ------------------------------------------------------------------ indexing
-    def build_index(self, builder: KeyBuilder) -> Dict[Tuple, Tuple[int, int]]:
-        index: Dict[Tuple, Tuple[int, int]] = {}
+    def build_index(self, builder: KeyBuilder) -> Dict[Tuple, List[Tuple[int, int]]]:
+        index: Dict[Tuple, List[Tuple[int, int]]] = {}
+        buckets: Dict[Tuple, List[Tuple[int, int]]] = {}
         for tape_idx, tape in enumerate(self.tapes):
             for ex_idx, exchange in enumerate(tape.exchanges):
                 key = builder.build_key(tape, exchange)
-                index[key] = (tape_idx, ex_idx)
+                index.setdefault(key, []).append((tape_idx, ex_idx))
+                bucket = builder.bucket_key(tape, exchange)
+                buckets.setdefault(bucket, []).append((tape_idx, ex_idx))
+        self._index = index
+        self._buckets = buckets
         return index
+
+    def find_matches(
+        self, builder: KeyBuilder, ctx: MatchingContext, stdin: bytes
+    ) -> List[Tuple[int, int]]:
+        if not self.tapes:
+            self.load_all()
+        if not self._index:
+            self.build_index(builder)
+
+        key = builder.context_key(ctx, stdin)
+        matches = self._index.get(key)
+        if matches:
+            return matches
+
+        bucket_key = builder.bucket_context_key(ctx)
+        candidates = self._buckets.get(bucket_key, [])
+        if not candidates:
+            return []
+
+        actual_env = builder.filter_env_values(ctx.env)
+        actual_command = builder.command_for_context(ctx)
+        actual_stdin = builder.stdin_for_payload(stdin)
+
+        resolved: List[Tuple[int, int]] = []
+        for tape_idx, ex_idx in candidates:
+            tape = self.tapes[tape_idx]
+            exchange = tape.exchanges[ex_idx]
+            if builder.filter_env_values(tape.meta.env) != actual_env:
+                continue
+            if not builder.command_matcher(builder.command_for_tape(tape), actual_command, ctx):
+                continue
+            if not builder.stdin_matcher(
+                builder.stdin_for_exchange(exchange), actual_stdin, ctx
+            ):
+                continue
+            resolved.append((tape_idx, ex_idx))
+        return resolved
 
     # ---------------------------------------------------------------- writing
     def write_tape(self, path: Path, tape: Tape, *, mark_new: bool = True) -> None:
@@ -209,6 +313,10 @@ class TapeStore:
             json_text = pyjson5.dumps(data, indent=2) + "\n"
             handle.write(json_text)
         os.replace(tmp, path)
+
+        # Invalidate cached indexes so callers rebuild with latest content.
+        self._index.clear()
+        self._buckets.clear()
 
         if path in self.paths:
             idx = self.paths.index(path)
@@ -232,6 +340,9 @@ class TapeStore:
         if not self.paths:
             self.load_all()
         return list(zip(self.paths, self.tapes))
+
+    def read_tape(self, path: Path) -> Tape:
+        return self._read_tape(path)
 
     def validate(self, *, strict: bool = False) -> List[tuple[Path, str]]:
         validator = _STRICT_VALIDATE if strict else _VALIDATE

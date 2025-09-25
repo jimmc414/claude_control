@@ -6,7 +6,7 @@ import base64
 import re
 import time
 from dataclasses import dataclass
-from typing import Dict, Optional, Tuple
+from typing import Optional
 
 from .errors import should_inject_error
 from .exceptions import TapeMissError
@@ -28,14 +28,12 @@ class ReplayTransport:
     def __init__(
         self,
         store: TapeStore,
-        index: Dict[Tuple, Tuple[int, int]],
         builder: KeyBuilder,
         ctx: MatchingContext,
         latency_cfg,
         error_cfg,
     ) -> None:
         self.store = store
-        self.index = index
         self.builder = builder
         self.ctx = ctx
         self.latency_cfg = latency_cfg
@@ -58,11 +56,10 @@ class ReplayTransport:
         return self._handle_send((text + "\n").encode("utf-8"))
 
     def _handle_send(self, payload: bytes) -> int:
-        key = self.builder.context_key(self.ctx, payload)
-        match = self.index.get(key)
-        if not match:
+        matches = self.store.find_matches(self.builder, self.ctx, payload)
+        if not matches:
             raise TapeMissError(f"No tape found for input {payload!r}")
-        tape_idx, exchange_idx = match
+        tape_idx, exchange_idx = matches[0]
         self._current = ReplayHandle(tape_idx, exchange_idx)
         tape = self.store.tapes[tape_idx]
         exchange = tape.exchanges[exchange_idx]
