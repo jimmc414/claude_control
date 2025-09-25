@@ -22,6 +22,7 @@ ClaudeControl uses a simple configuration hierarchy with minimal required settin
 | Buffer Size | - | `output_limit` | 10000 | No | Output buffer lines in memory |
 | Max Runtime | - | `max_session_runtime` | 3600s | No | Maximum session lifetime |
 | Max Output Size | - | `max_output_size` | 100MB | No | Maximum log file size |
+| Replay Defaults | - | `replay` | `{}` | No | Nested record/replay configuration (see "Replay and Tape Configuration") |
 
 **Example config.json:**
 ```json
@@ -33,7 +34,16 @@ ClaudeControl uses a simple configuration hierarchy with minimal required settin
     "log_level": "INFO",
     "output_limit": 10000,
     "max_session_runtime": 3600,
-    "max_output_size": 104857600
+    "max_output_size": 104857600,
+    "replay": {
+        "tapes_path": "./tapes",
+        "record": "new",
+        "fallback": "not_found",
+        "latency": 0,
+        "error_rate": 0,
+        "summary": true,
+        "silent": false
+    }
 }
 ```
 
@@ -160,6 +170,7 @@ results = parallel_commands(
 | Investigation Reports | `~/.claude-control/investigations/` | No | Discovery reports |
 | Test Reports | `~/.claude-control/test-reports/` | No | Test results |
 | Named Pipes | `/tmp/claudecontrol/{id}.pipe` | No | Stream output pipes |
+| Replay Tapes | `./tapes` (relative to launch) | Yes (`replay.tapes_path` or `--tapes`) | Recorded session tapes |
 
 ### Directory Permissions
 All directories are created with mode `0700` (user-only access) for security.
@@ -280,12 +291,14 @@ Common configuration issues and solutions:
 | Command Whitelist | - | None | Optional allowed commands only |
 | Max Output Size | `max_output_size` | 100MB | Prevent disk exhaustion |
 | Session Isolation | - | Always | Each session has own PTY |
+| Tape Redaction | `replay.redact` | true | Apply secret detectors before persisting tapes |
 
 ### Sensitive Data Handling
 - Passwords are never logged
 - Session logs are user-only readable (mode 0600)
 - Named pipes are user-only accessible
 - No network operations by default
+- Tape recording runs with redaction enabled unless `CLAUDECONTROL_REDACT=0`
 
 ## CLI Configuration Management
 
@@ -302,6 +315,18 @@ ccontrol config delete old_config
 
 # Use saved configuration
 ccontrol run --config mysql_dev
+
+# Record a new tape with explicit defaults
+ccontrol rec --tapes ./tapes sqlite3
+
+# Replay using existing tapes with proxy fallback
+ccontrol proxy --tapes ./tapes --fallback proxy git status
+
+# Validate stored tapes before CI
+ccontrol tapes validate --strict
+
+# List unused tapes to prune
+ccontrol tapes list --unused
 ```
 
 ## Default Values Reference
@@ -321,6 +346,63 @@ ccontrol run --config mysql_dev
 - Log rotation size: 10MB
 - Max fuzz inputs: 50
 - Parallel command workers: 10
+
+## Replay and Tape Configuration
+
+### Core Replay Settings
+| Setting | CLI Flag | Config Key | Default | Description |
+|---------|----------|------------|---------|-------------|
+| Tapes Directory | `--tapes` | `replay.tapes_path` | `./tapes` | Root folder for stored tapes |
+| Record Mode | `--record` | `replay.record` | `new` | Persist new interactions (`new`, `overwrite`, `disabled`) |
+| Fallback Mode | `--fallback` | `replay.fallback` | `not_found` | Behavior when no tape matches (`not_found`, `proxy`) |
+| Tape Name | `--name` | `replay.name` | `null` | Optional logical name associated with current run |
+| Tape Generator | - | `replay.tape_name_generator` | Hash-based default | Customize relative tape path generation |
+| Summary | `--summary[=0|1]` | `replay.summary` | true | Print new and unused tapes on exit |
+| Silent Mode | `--silent` | `replay.silent` | false | Suppress mid-exchange logging |
+| Debug Mode | `--debug` | `replay.debug` | false | Emit verbose matcher diagnostics |
+
+### Matching Controls
+| Setting | CLI Flag | Config Key | Default | Description |
+|---------|----------|------------|---------|-------------|
+| Allow Env | `--allow-env` | `replay.allow_env` | `[]` | Only compare specified environment variables |
+| Ignore Env | `--ignore-env` | `replay.ignore_env` | `["PWD","SHLVL","RANDOM"]` | Drop volatile env keys from matching |
+| Ignore Args | `--ignore-args` | `replay.ignore_args` | `[]` | Arg indices or names to exclude from comparisons |
+| Ignore Stdin | `--ignore-stdin` | `replay.ignore_stdin` | false | Skip stdin matching entirely |
+| Command Matcher | - | `replay.command_matcher` | Built-in | Custom callable for `(program, args)` normalization |
+| Stdin Matcher | - | `replay.stdin_matcher` | Exact | Custom callable for stdin comparison |
+| Default Prompts | - | `replay.default_prompts` | Auto detected | Prompt patterns used to segment exchanges |
+
+### Decorators and Hooks
+| Setting | CLI Flag | Config Key | Default | Description |
+|---------|----------|------------|---------|-------------|
+| Input Decorator | - | `replay.input_decorator` | null | Callable to transform stdin before matching |
+| Output Decorator | - | `replay.output_decorator` | null | Callable to transform captured output |
+| Tape Decorator | - | `replay.tape_decorator` | null | Callable to enrich tape metadata before write |
+| State Hash Function | - | `replay.state_hash` | null | Function returning additional key material |
+
+### Simulation Controls
+| Setting | CLI Flag | Config Key | Default | Description |
+|---------|----------|------------|---------|-------------|
+| Latency | `--latency` | `replay.latency` | `0` | Constant, range, or callable controlling chunk pacing |
+| Error Rate | `--error-rate` | `replay.error_rate` | `0` | Percentage or callable for synthetic failures |
+| Seed | - | `replay.seed` | Auto | RNG seed to stabilize latency/error injection |
+
+### Tape Maintenance Commands
+- `ccontrol tapes list [--used|--unused]` — enumerate tape usage statistics.
+- `ccontrol tapes validate [--strict]` — verify schema, encoding, and matcher readiness.
+- `ccontrol tapes redact --inplace` — apply redaction filters retroactively.
+- `ccontrol tapes diff <a> <b>` — compare two tapes with normalization applied.
+
+### Replay Usage Patterns
+- **Authoring:** `ccontrol rec --record overwrite program` regenerates specific exchanges intentionally.
+- **CI enforcement:** `replay.record="disabled"` with `replay.fallback="not_found"` surfaces missing tapes immediately.
+- **Proxy fallback:** `replay.fallback="proxy"` runs the live program when no tape matches while still capturing output.
+
+### Tape Lifecycle Summary
+1. Recorder segments each interaction into exchanges and writes JSON5 tapes with per-chunk timing and redaction applied.
+2. Player loads all tapes at startup into an index keyed by normalized program, env, cwd, prompt, and input signatures.
+3. Exit summaries highlight newly created tapes and unused entries so stale artifacts can be pruned.
+4. Tape edits require restarting the CLI or session, mirroring Talkback’s load-on-start behavior.
 
 ### Dimensions
 - Default terminal: 24 rows × 80 columns
@@ -388,7 +470,19 @@ pip install -e .
     "max_output_size": 104857600,
     "log_rotation_size": 10485760,
     "keep_log_days": 7,
-    "safe_mode": true
+    "safe_mode": true,
+    "replay": {
+        "tapes_path": "./tapes",
+        "record": "new",
+        "fallback": "proxy",
+        "summary": true,
+        "latency": 0,
+        "error_rate": 0,
+        "allow_env": ["LANG", "TERM"],
+        "ignore_env": ["PWD", "SHLVL", "RANDOM"],
+        "debug": false,
+        "silent": false
+    }
 }
 ```
 
