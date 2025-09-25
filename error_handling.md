@@ -1,38 +1,58 @@
 # ClaudeControl Error Handling Documentation
 
+This document consolidates legacy `claude_control` behavior with the new Talkback-style record & replay system. It covers the expanded exception hierarchy, layer-specific handling strategies, recovery flows, logging, and user-facing diagnostics across the live automation stack and the replay/tape toolchain.
+
 ## Error Hierarchy
 
 ```mermaid
 graph TD
     BaseError[Exception]
     BaseError --> CCError[ClaudeControlError]
-    
+
     CCError --> SessionError[SessionError]
     CCError --> TimeoutError[TimeoutError]
     CCError --> ProcessError[ProcessError]
     CCError --> ConfigError[ConfigNotFoundError]
-    
+    CCError --> ReplayError[ReplayError]
+
     SessionError --> NotAlive[SessionNotAliveError]
     SessionError --> NotFound[SessionNotFoundError]
     SessionError --> Registry[RegistryError]
-    
+
     ProcessError --> SpawnError[ProcessSpawnError]
     ProcessError --> DeadProcess[ProcessDiedError]
     ProcessError --> ZombieError[ZombieProcessError]
-    
+
     TimeoutError --> ExpectTimeout[ExpectTimeoutError]
     TimeoutError --> ConnectionTimeout[ConnectionTimeoutError]
     TimeoutError --> OperationTimeout[OperationTimeoutError]
-    
+
+    ReplayError --> TapeMiss[TapeMissError]
+    ReplayError --> TapeSchema[TapeSchemaError]
+    ReplayError --> TapeIO[TapeIOError]
+    ReplayError --> TapeLock[TapeLockError]
+    ReplayError --> RedactionErr[RedactionError]
+    ReplayError --> DecoratorErr[TapeDecoratorError]
+    ReplayError --> LatencyErr[LatencyPolicyError]
+    ReplayError --> InjectionErr[ErrorInjectionFailure]
+    ReplayError --> SummaryErr[ExitSummaryError]
+
     BaseError --> SystemError[System Errors]
     SystemError --> IOError
     SystemError --> OSError
     SystemError --> PermissionError
 ```
 
+**Key additions**:
+
+* `ReplayError` umbrella for the record/playback stack (`TapeMissError`, `TapeSchemaError`, `TapeIOError`, `TapeLockError`, `RedactionError`, `TapeDecoratorError`, `LatencyPolicyError`, `ErrorInjectionFailure`, `ExitSummaryError`).
+* Schema and redaction failures surface rich diagnostics so users can repair tapes without re-recording.
+* Policy errors (`LatencyPolicyError`, `ErrorInjectionFailure`) guard deterministic simulation settings.
+
 ## Error Handling Layers
 
-### 1. Process Control Layer
+### 1. Process Control Layer (unchanged)
+
 ```python
 # Location: core.py - Session class
 # Catches: Process spawning and lifecycle errors
@@ -59,10 +79,11 @@ ZombieProcessError:
   - Example: Parent died without reaping child
 ```
 
-### 2. Pattern Matching Layer
+### 2. Pattern Matching Layer (live + replay)
+
 ```python
-# Location: Session.expect(), patterns.py
-# Catches: Pattern not found within timeout
+# Location: Session.expect(), patterns.py, replay.Player
+# Catches: Prompt or pattern not found within timeout or replay mismatch
 
 ExpectTimeoutError:
   - User Message: "Timeout waiting for pattern: {patterns}"
@@ -71,7 +92,14 @@ ExpectTimeoutError:
   - Recovery: Retry with different pattern or longer timeout
   - Example: Prompt never appeared, wrong pattern
 
-Key Feature: Recent output included in error message
+TapeMissError:
+  - User Message: "No tape exchange matched input: {fingerprint}"
+  - Log Level: ERROR when fallback=NOT_FOUND, INFO when fallback=PROXY
+  - Context: Program, args, cwd, prompt signature, stdin hash
+  - Recovery: Depends on fallback mode (proxy to live process or fail fast)
+  - Example: New CLI prompt, unmatched stdin mutation
+
+Key Feature: Recent output and normalized comparison details included in errors when debugging is enabled.
 ```python
 TimeoutError: Timeout (30s) waiting for ['>>>', '...']
 Recent output (last 50 lines):
@@ -79,9 +107,9 @@ Recent output (last 50 lines):
 [actual output shown here]
 ----------------------------------------
 ```
-```
 
 ### 3. Session Management Layer
+
 ```python
 # Location: core.py - Registry operations
 # Catches: Session lifecycle and registry errors
@@ -108,9 +136,66 @@ RegistryError:
   - Example: Registry corruption, lock timeout
 ```
 
-### 4. Investigation Layer
+### 4. Replay & Tape Management Layer
+
 ```python
-# Location: investigate.py, testing.py
+# Location: replay.store, replay.record, replay.play, replay.summary
+# Catches: Tape IO, schema, decorator, latency/error-policy failures
+
+TapeSchemaError:
+  - User Message: "Tape {path} failed schema validation"
+  - Log Level: ERROR
+  - Context: Validation errors, field path, offending value
+  - Recovery: Fix tape manually or re-record; strict mode aborts load
+  - Example: Missing exchanges array, invalid chunk structure
+
+TapeIOError:
+  - User Message: "Unable to read/write tape {path}: {reason}"
+  - Log Level: ERROR
+  - Context: File path, attempted operation, errno
+  - Recovery: Retry, ensure permissions, disk space
+  - Example: Atomic rename failure, read-only filesystem
+
+TapeLockError:
+  - User Message: "Could not acquire lock for tape {path}"
+  - Log Level: WARNING
+  - Context: Lock owner, retry count
+  - Recovery: Wait/backoff; fallback to live run if configured
+  - Example: Concurrent overwrite via CLI while session recording
+
+RedactionError:
+  - User Message: "Secret redaction failed for tape {path}"
+  - Log Level: ERROR
+  - Context: Pattern name, offending snippet (redacted)
+  - Recovery: Disable redaction via env for debugging or adjust patterns
+  - Example: Non-UTF8 secret chunk during redact-in-place
+
+TapeDecoratorError:
+  - User Message: "Tape decorator raised {exc}"
+  - Log Level: WARNING
+  - Context: Decorator name, exchange index
+  - Recovery: Skip decorator result, continue recording
+  - Example: Custom decorator accessing missing metadata
+
+LatencyPolicyError / ErrorInjectionFailure:
+  - User Message: "Latency/Error policy produced invalid value"
+  - Log Level: ERROR
+  - Context: Policy callable, provided context snapshot
+  - Recovery: Disable policy or fix callable
+  - Example: Callable returns negative latency, probability >100
+
+ExitSummaryError:
+  - User Message: "Failed to emit replay summary"
+  - Log Level: WARNING
+  - Context: Summary path, collected stats
+  - Recovery: Log-only; session completes successfully
+  - Example: stdout closed early, JSON summary write failure
+```
+
+### 5. Investigation & Testing Layer (live + replay)
+
+```python
+# Location: investigate.py, testing.py, replay.summary
 # Catches: Program investigation and testing errors
 
 SafeModeViolation:
@@ -138,9 +223,10 @@ TestFailure:
 ## Error Recovery Strategies
 
 ### Automatic Retry with Backoff
+
 ```python
-# Used for: Transient failures, slow-starting programs
-# Location: Session operations, investigations
+# Used for: Transient failures, slow-starting programs, tape lock contention
+# Location: Session operations, investigations, replay.store
 
 Pattern: Immediate → 1s → 2s → 5s → 10s (max 3-5 attempts)
 
@@ -148,7 +234,7 @@ def with_retry(operation, max_attempts=3):
     for attempt in range(max_attempts):
         try:
             return operation()
-        except TimeoutError:
+        except (TimeoutError, TapeLockError):
             if attempt < max_attempts - 1:
                 wait_time = min(2 ** attempt, 10)
                 time.sleep(wait_time)
@@ -157,6 +243,7 @@ def with_retry(operation, max_attempts=3):
 ```
 
 ### Session Recovery Flow
+
 ```mermaid
 graph LR
     A[Send Command] --> B{Session Alive?}
@@ -171,68 +258,104 @@ graph LR
     B -->|Yes| I
 ```
 
+### Replay Miss Handling
+
+```mermaid
+graph TD
+    A[Incoming Input] --> B{Tape Match Found?}
+    B -->|Yes| C[Stream Recorded Chunks]
+    C --> D{Inject Error?}
+    D -->|Yes| E[Raise Synthetic Error]
+    D -->|No| F[Return Recorded Result]
+    B -->|No| G{Fallback Mode}
+    G -->|NOT_FOUND| H[Raise TapeMissError]
+    G -->|PROXY| I[Spawn Live Process]
+    I --> J{Record Mode}
+    J -->|DISABLED| K[Return Live Output]
+    J -->|NEW/OVERWRITE| L[Persist Tape Update]
+```
+
 ### Pattern Matching Fallbacks
+
 ```markdown
 Strategy: Try multiple pattern variations
-Location: expect() operations
+Location: expect() operations and replay.Player matching
 
 1. Try exact pattern
 2. Try case-insensitive
 3. Try partial match
 4. Try common variations (>>> vs >>)
-5. Return recent output in error
+5. Return recent output and normalized comparison diff in error
 
 Example progression:
-"mysql>" → "mysql" → "sql>" → ">" → timeout with output
+"mysql>" → "mysql" → "sql>" → ">" → timeout with output or tape miss report
 ```
 
 ### Resource Cleanup on Error
+
 ```python
 # Guaranteed cleanup even on error
-# Location: Session.__exit__, atexit handlers
+# Location: Session.__exit__, replay.Player teardown, atexit handlers
 
 Cleanup sequence:
 1. Terminate child process (SIGTERM)
 2. Wait 2 seconds
 3. Force kill if needed (SIGKILL)
-4. Close file handles
-5. Remove from registry
-6. Delete named pipes
-7. Log final state
+4. Close file handles (logfile_read, tape files)
+5. Remove from registry and release tape locks
+6. Delete named pipes/temp files
+7. Log final state and summary metrics
 ```
 
 ## Error Response Formats
 
 ### CLI Error Output
+
 ```bash
 # User-friendly error with actionable advice
-$ ccontrol run "badcommand"
-Error: Failed to spawn process 'badcommand'
-Reason: Command not found
-
+$ ccontrol play sqlite3 -batch
+Error: No tape exchange matched input for sqlite3 -batch
+Context:
+  tapes: ./tapes/sqlite3/*.json5
+  fingerprint: sendline('select 1;')
 Suggestions:
-- Check if the command is installed
-- Verify the command name is correct
-- Try using the full path to the executable
+- Run with --fallback proxy to capture a live session
+- Record new tape via `ccontrol rec -- sqlite3 -batch`
+- Adjust matchers or ignore lists if prompts change
 ```
 
 ### Python API Error Format
+
 ```python
 # Detailed error with context for debugging
+from claudecontrol import Session
+from claudecontrol.replay import RecordMode, FallbackMode
+
 try:
-    session.expect(">>>", timeout=5)
+    session = Session(
+        "sqlite3",
+        tapes_path="./tapes",
+        record=RecordMode.DISABLED,
+        fallback=FallbackMode.NOT_FOUND,
+    )
+    session.expect("sqlite> ", timeout=5)
 except TimeoutError as e:
     print(e)
-    # TimeoutError: Timeout (5s) waiting for '>>>'
+    # TimeoutError: Timeout (5s) waiting for 'sqlite> '
     # Recent output (last 50 lines):
     # ----------------------------------------
-    # Python 3.9.0
-    # Type "help" for more information.
-    # >>> 
+    # ...
     # ----------------------------------------
+except TapeMissError as e:
+    print(e.diagnostics)
+    # TapeMissError: no exchange matched fingerprint <hash>
+    # Normalized differences:
+    #   expected prompt: 'sqlite> '
+    #   actual prompt: 'sqlite3> '
 ```
 
 ### Investigation Report Errors
+
 ```json
 {
     "program": "test_app",
@@ -245,14 +368,29 @@ except TimeoutError as e:
     },
     "partial_results": {
         "commands_found": ["help", "status"],
-        "states_discovered": 2
+        "states_discovered": 2,
+        "tapes_used": ["sqlite3/select-1.json5"],
+        "tapes_missing": ["sqlite3/pragma.json5"]
     }
 }
+```
+
+### Exit Summary Errors
+
+```markdown
+===== SUMMARY (claude_control) =====
+New tapes:
+- sqlite3/select-1.json5
+Unused tapes:
+- git/status.json5
+Warnings:
+- Failed to write summary file: ExitSummaryError(Errno 5)
 ```
 
 ## Global Error Handlers
 
 ### Process Death Handler
+
 ```markdown
 Location: Session class signal handlers
 Catches: SIGCHLD from child processes
@@ -262,10 +400,11 @@ Actions:
 2. Mark session as dead
 3. Trigger cleanup if auto_cleanup=True
 4. Notify waiting expect() calls
-5. Update registry
+5. Update registry and replay summary metrics
 ```
 
 ### Zombie Process Reaper
+
 ```markdown
 Location: Registry cleanup thread
 Runs: Every 60 seconds or on-demand
@@ -280,13 +419,14 @@ Actions:
 ```
 
 ### Resource Exhaustion Handler
+
 ```markdown
 Location: Session creation, core.py
 Catches: Too many sessions, memory limits
 
 Actions:
-1. Check current session count
-2. Clean up dead sessions
+1. Check current session count and active tape players
+2. Clean up dead sessions and release tape locks
 3. Retry creation
 4. Fail with helpful message if still over limit
 
@@ -294,218 +434,78 @@ Example message:
 "Maximum sessions (20) reached. Close existing sessions or increase max_sessions in config"
 ```
 
+## Replay-Specific Diagnostics
+
+| Area | Error | Mitigation |
+|------|-------|------------|
+| Tape loading | TapeSchemaError | Run `ccontrol tapes validate --strict` to locate structural issues |
+| Matching | TapeMissError | Record new tape (`ccontrol rec`), tweak matchers/normalizers, or enable proxy fallback |
+| Decorators | TapeDecoratorError | Inspect custom decorator stack; exceptions downgraded to warnings by default |
+| Redaction | RedactionError | Set `CLAUDECONTROL_REDACT=0` temporarily or update regex patterns |
+| Latency/Error policies | LatencyPolicyError / ErrorInjectionFailure | Ensure policies return valid integers/probabilities; seed RNG for determinism |
+| Summary | ExitSummaryError | Review stdout/stderr availability; summary failure never aborts sessions |
+
 ## Error Logging
 
 ### Log Levels and Destinations
+
 | Level | What Gets Logged | Where | When |
 |-------|-----------------|-------|------|
-| ERROR | Process spawn failures, crashes | File + stderr | Always |
-| WARNING | Timeouts, retries, zombies | File + stderr | Default |
-| INFO | Expected errors, user mistakes | File only | Default |
-| DEBUG | All operations, full output | File only | When enabled |
+| ERROR | Process spawn failures, tape schema/IO errors, crashes | File + stderr | Always |
+| WARNING | Timeouts, retries, zombies, decorator failures, exit summary issues | File + stderr | Default |
+| INFO | Expected errors, user mistakes, tape misses with proxy fallback | File only | Default |
+| DEBUG | All operations, full output, normalized diff diagnostics | File only | When enabled |
 
 ### Logged Context
+
 ```python
 # Every error log includes:
 {
     "timestamp": "2024-01-20T10:30:00Z",
     "session_id": "abc123",
-    "command": "mysql -u root",
-    "error_type": "TimeoutError",
+    "program": "mysql",
+    "args": ["-u", "root"],
+    "tape_path": "tapes/mysql/login.json5",  # when applicable
+    "error_type": "TapeMissError",
     "error_message": "Timeout waiting for password prompt",
-    "stack_trace": "...",  # DEBUG level only
     "recent_output": "Last 20 lines...",
-    "process_state": "alive|dead|zombie",
-    "runtime_seconds": 45.2
+    "match_diagnostics": {
+        "expected_prompt": "mysql> ",
+        "actual_prompt": "mysql 8.0> ",
+        "ignored_env": ["PWD", "SHLVL"]
+    },
+    "process_state": "alive|dead|zombie|replay",
+    "runtime_seconds": 45.2,
+    "record_mode": "NEW",
+    "fallback_mode": "NOT_FOUND"
 }
 ```
 
-## Error Prevention Strategies
+### Structured Summary Logs
 
-### Input Validation
-```python
-# Prevent errors before they happen
-# Location: Session.__init__, control()
+Replay summary generation emits structured events to aid CI diagnostics:
 
-Validations:
-- Command exists and is executable
-- Working directory exists
-- Timeout is positive integer
-- Environment variables are valid
-- Terminal dimensions are reasonable
-
-Example:
-if not shutil.which(command.split()[0]):
-    raise ValueError(f"Command not found: {command}")
+```json
+{
+  "event": "replay.summary",
+  "new_tapes": ["sqlite3/select-1.json5"],
+  "unused_tapes": ["git/status.json5"],
+  "errors": [],
+  "record_mode": "NEW",
+  "fallback_mode": "NOT_FOUND"
+}
 ```
 
-### Safe Defaults
-```markdown
-| Parameter | Default | Why Safe |
-|-----------|---------|----------|
-| timeout | 30s | Prevents infinite wait |
-| safe_mode | True | Blocks dangerous operations |
-| auto_cleanup | True | Prevents resource leaks |
-| max_sessions | 20 | Prevents exhaustion |
-| output_limit | 10k lines | Prevents memory overflow |
-```
+## CLI & Configuration Failures
 
-### Defensive Programming
-```python
-# Always check session state before operations
-if not session.is_alive():
-    raise SessionError("Session not active")
+* CLI flag conflicts (e.g., `--record disabled` with `--fallback proxy` missing tapes) raise `SystemExit` with actionable help.
+* Config parsing errors bubble as `ConfigNotFoundError` or `ConfigFormatError`, with CLI suggestions to run `ccontrol config --reset`.
+* Tape management subcommands (`tapes validate|list|redact`) use the same `ReplayError` hierarchy, ensuring consistent messaging across automation, CLI, and tests.
 
-# Always include timeout
-session.expect(pattern, timeout=30)  # Never infinite
+## Testing Considerations
 
-# Always cleanup on exit
-try:
-    # operations
-finally:
-    session.close()  # Guaranteed cleanup
-```
+* CI defaults to `record=DISABLED` + `fallback=NOT_FOUND`; tape misses fail fast.
+* Replay-enabled tests capture normalized diff diagnostics on failure to help update fixtures.
+* `tests/` utilities assert that redaction errors are warnings during authoring but fatal in CI strict mode.
 
-## Error Recovery Examples
-
-### Example 1: Resilient Server Control
-```python
-def start_server_resilient(max_retries=3):
-    """Start server with automatic recovery"""
-    for attempt in range(max_retries):
-        try:
-            session = control("npm run dev", reuse=True)
-            session.expect("Server running", timeout=30)
-            return session
-        except TimeoutError:
-            if attempt < max_retries - 1:
-                print(f"Server slow to start, retry {attempt + 1}")
-                time.sleep(5)
-            else:
-                raise
-        except ProcessError as e:
-            if "EADDRINUSE" in str(e):
-                # Port in use, try to kill existing
-                cleanup_sessions()
-                time.sleep(2)
-            else:
-                raise
-```
-
-### Example 2: Investigation with Fallbacks
-```python
-def investigate_with_fallbacks(program):
-    """Investigate with multiple strategies"""
-    try:
-        # Try full investigation
-        return investigate_program(program, timeout=30)
-    except TimeoutError:
-        # Try quick probe
-        return ProgramInvestigator.quick_probe(program, timeout=5)
-    except ProcessError:
-        # Try non-interactive analysis
-        try:
-            output = subprocess.check_output(
-                [program, "--help"], 
-                timeout=5
-            )
-            return {"type": "help_only", "output": output}
-        except:
-            return {"type": "failed", "error": "Could not analyze"}
-```
-
-### Example 3: Safe Pattern Matching
-```python
-def expect_with_fallbacks(session, patterns, timeout=30):
-    """Try multiple pattern variations"""
-    # Try exact match first
-    try:
-        return session.expect(patterns, timeout=timeout/3)
-    except TimeoutError:
-        pass
-    
-    # Try regex patterns
-    try:
-        import re
-        regex_patterns = [re.compile(p, re.IGNORECASE) 
-                         for p in patterns]
-        return session.expect(regex_patterns, timeout=timeout/3)
-    except TimeoutError:
-        pass
-    
-    # Try common variations
-    variations = []
-    for p in patterns:
-        variations.extend([p, p.lower(), p.upper(), f"*{p}*"])
-    
-    try:
-        return session.expect(variations, timeout=timeout/3)
-    except TimeoutError as e:
-        # Include helpful context
-        e.args = (f"{e.args[0]}\nTried variations: {variations}",)
-        raise
-```
-
-## Critical Error Scenarios
-
-### Scenario: System Resource Exhaustion
-```markdown
-Error: Too many open files / processes
-Prevention: 
-- Enforce max_sessions limit
-- Auto-cleanup dead sessions
-- Close file handles promptly
-
-Recovery:
-1. Emergency cleanup all sessions
-2. Force garbage collection
-3. Restart with lower limits
-```
-
-### Scenario: Hung Process Won't Die
-```markdown
-Error: Process ignores SIGTERM
-Prevention:
-- Always use timeouts
-- Monitor resource usage
-
-Recovery:
-1. SIGTERM with 2s grace period
-2. SIGKILL if still alive
-3. OS-level process group kill
-4. Manual intervention required
-```
-
-### Scenario: Corrupted Session State
-```markdown
-Error: Registry inconsistent with reality
-Prevention:
-- Atomic updates
-- Regular validation
-
-Recovery:
-1. Scan actual processes
-2. Rebuild registry from filesystem
-3. Clean orphaned resources
-4. Log discrepancies
-```
-
-## Best Practices
-
-1. **Always include timeout** - Never allow infinite waits
-2. **Include context in errors** - Recent output, attempted patterns
-3. **Fail fast for unrecoverable** - Don't retry what can't succeed
-4. **Clean up on any exit path** - Use try/finally or context managers
-5. **Log before raising** - Capture context while available
-6. **Provide actionable messages** - Tell users how to fix issues
-7. **Distinguish expected vs unexpected** - Different log levels
-8. **Test error paths** - Error handling needs tests too
-
-## Summary
-
-ClaudeControl's error handling philosophy:
-- **Informative errors** - Include recent output and context
-- **Automatic recovery** - When safe and sensible
-- **Safe failures** - Always clean up resources
-- **User-friendly messages** - Hide complexity, show solutions
-- **Defensive defaults** - Prevent errors before they occur
+By aligning legacy process/session safeguards with the new replay/tape stack, `claude_control` delivers deterministic automation while surfacing actionable guidance whenever errors occur.
