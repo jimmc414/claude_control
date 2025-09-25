@@ -98,10 +98,13 @@ class Session:
         tapes_path: Optional[str] = None,
         record: RecordMode = RecordMode.DISABLED,
         fallback: FallbackMode = FallbackMode.NOT_FOUND,
-        summary: bool = False,
+        summary: bool = True,
+        name: Optional[str] = None,
         tape_name_generator: Optional[TapeNameGenerator] = None,
         allow_env: Optional[List[str]] = None,
         ignore_env: Optional[List[str]] = None,
+        ignore_args: Optional[List[Union[int, str]]] = None,
+        ignore_stdin: bool = False,
         stdin_matcher: Optional[Callable] = None,
         command_matcher: Optional[Callable] = None,
         input_decorator: Optional[InputDecorator] = None,
@@ -123,6 +126,7 @@ class Session:
         self.latency = latency
         self.error_rate = error_rate
         self.summary = summary
+        self.name = name
         self._record_mode = record
         self._fallback_mode = fallback
         self._replay_enabled = replay
@@ -132,6 +136,8 @@ class Session:
         self._tape_index: Dict = {}
         self._allow_env = allow_env
         self._ignore_env = ignore_env
+        self._ignore_args = ignore_args
+        self._ignore_stdin = ignore_stdin
         self._stdin_matcher = stdin_matcher or default_stdin_matcher
         self._command_matcher = command_matcher or default_command_matcher
         self._key_builder = KeyBuilder(
@@ -139,6 +145,8 @@ class Session:
             self._ignore_env,
             self._stdin_matcher,
             self._command_matcher,
+            self._ignore_args,
+            self._ignore_stdin,
         )
         self._input_decorator = input_decorator
         self._output_decorator = output_decorator
@@ -247,7 +255,6 @@ class Session:
         self._tape_index = self._tape_store.build_index(self._key_builder)
         self.process = ReplayTransport(
             self._tape_store,
-            self._tape_index,
             self._key_builder,
             self._matching_context(),
             self.latency,

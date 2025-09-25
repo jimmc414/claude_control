@@ -2,8 +2,9 @@ import base64
 
 import pyjson5
 
+from claudecontrol.replay.matchers import MatchingContext, default_command_matcher, default_stdin_matcher
 from claudecontrol.replay.model import Chunk, Exchange, IOInput, IOOutput, Tape, TapeMeta
-from claudecontrol.replay.store import TapeStore
+from claudecontrol.replay.store import KeyBuilder, TapeStore
 
 
 def test_store_write_and_load(tmp_path):
@@ -101,3 +102,59 @@ def test_store_redact_inplace_updates_file(tmp_path):
     chunk_data = updated["exchanges"][0]["output"]["chunks"][0]["dataB64"]
     assert "***" in input_text
     assert base64.b64decode(chunk_data).decode("utf-8").endswith("***\n")
+
+
+def test_find_matches_respects_ignore_rules(tmp_path):
+    store = TapeStore(tmp_path)
+    tape = Tape(
+        meta=TapeMeta(
+            created_at="2024-01-01T00:00:00Z",
+            program="demo",
+            args=["--token", "abc123"],
+            env={"LANG": "en_US", "PWD": str(tmp_path)},
+            cwd=str(tmp_path),
+            pty={"rows": 24, "cols": 80},
+        ),
+        session={"version": "test"},
+        exchanges=[
+            Exchange(
+                pre={"prompt": ">"},
+                input=IOInput(kind="line", data_text="status"),
+                output=IOOutput(
+                    chunks=[
+                        Chunk(
+                            delay_ms=0,
+                            data_b64=base64.b64encode(b"ok\n").decode("ascii"),
+                            is_utf8=True,
+                        )
+                    ]
+                ),
+                exit=None,
+            )
+        ],
+    )
+
+    path = tmp_path / "demo" / "match.json5"
+    store.write_tape(path, tape)
+    store.load_all()
+
+    builder = KeyBuilder(
+        allow_env=None,
+        ignore_env=["PWD"],
+        stdin_matcher=default_stdin_matcher,
+        command_matcher=default_command_matcher,
+        ignore_args=[1],
+        ignore_stdin=True,
+    )
+    store.build_index(builder)
+
+    ctx = MatchingContext(
+        program="demo",
+        args=["--token", "different"],
+        env={"LANG": "en_US", "PWD": "/other"},
+        cwd=str(tmp_path),
+        prompt=">",
+    )
+
+    matches = store.find_matches(builder, ctx, b"status\n")
+    assert matches

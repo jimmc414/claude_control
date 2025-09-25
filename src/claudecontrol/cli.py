@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""
-Command-line interface for claude-control
-"""
+"""Command-line interface for claude-control."""
 
+import base64
+import difflib
 import sys
 import json
 import time
@@ -24,6 +24,7 @@ from .core import (
 )
 from .claude_helpers import status, parallel_commands
 from .replay.modes import RecordMode, FallbackMode
+from .replay.normalize import collapse_ws, strip_ansi
 from .replay.store import TapeStore
 
 
@@ -49,6 +50,66 @@ def _parse_latency(value: str | None):
         start, end = value.split(",", 1)
         return (int(start), int(end))
     return int(value)
+
+
+def _apply_normalizers(text: str, *, ignore_ansi: bool, collapse: bool) -> str:
+    result = text
+    if ignore_ansi:
+        result = strip_ansi(result)
+    if collapse:
+        result = collapse_ws(result)
+    return result
+
+
+def _input_to_text(io) -> str:
+    if getattr(io, "data_text", None) is not None:
+        return io.data_text or ""
+    if getattr(io, "data_b64", None):
+        return base64.b64decode(io.data_b64).decode("utf-8", "ignore")
+    return ""
+
+
+def _output_chunks_to_lines(chunks, *, ignore_ansi: bool, collapse: bool) -> list[str]:
+    lines: list[str] = []
+    for idx, chunk in enumerate(chunks):
+        raw = base64.b64decode(chunk.data_b64)
+        if chunk.is_utf8:
+            text = raw.decode("utf-8", "ignore")
+            text = _apply_normalizers(text, ignore_ansi=ignore_ansi, collapse=collapse)
+            if not text.endswith("\n"):
+                text = text + "\n"
+            for line in text.splitlines():
+                lines.append(f"  OUTPUT[{idx}]: {line}")
+        else:
+            lines.append(f"  OUTPUT[{idx}]: <binary {chunk.data_b64}>")
+    return lines
+
+
+def _tape_to_lines(tape, *, ignore_ansi: bool, collapse: bool) -> list[str]:
+    lines = [
+        f"META program={tape.meta.program}",
+        f"META args={' '.join(tape.meta.args)}",
+        f"META cwd={tape.meta.cwd}",
+    ]
+    for idx, exchange in enumerate(tape.exchanges):
+        prompt = _apply_normalizers(
+            (exchange.pre or {}).get("prompt", ""),
+            ignore_ansi=ignore_ansi,
+            collapse=collapse,
+        )
+        lines.append(f"EXCHANGE {idx}: prompt={prompt}")
+        input_text = _apply_normalizers(
+            _input_to_text(exchange.input),
+            ignore_ansi=ignore_ansi,
+            collapse=collapse,
+        )
+        lines.append(f"  INPUT: {input_text}")
+        lines.extend(
+            _output_chunks_to_lines(exchange.output.chunks, ignore_ansi=ignore_ansi, collapse=collapse)
+        )
+        if exchange.exit:
+            lines.append(f"  EXIT: {exchange.exit}")
+    return lines
 
 
 def _run_replay_command(args, record_default: str, fallback_default: str) -> int:
@@ -162,6 +223,43 @@ def cmd_tapes_redact(args):
 
     for path in changed:
         print(f"- {path}")
+    return 0
+
+
+def cmd_tapes_diff(args):
+    store = TapeStore(Path(args.tapes))
+    left_path = store.root / args.left
+    right_path = store.root / args.right
+
+    if not left_path.exists():
+        print(f"Left tape not found: {left_path}")
+        return 1
+    if not right_path.exists():
+        print(f"Right tape not found: {right_path}")
+        return 1
+
+    left = store.read_tape(left_path)
+    right = store.read_tape(right_path)
+
+    left_lines = _tape_to_lines(left, ignore_ansi=args.ignore_ansi, collapse=args.collapse_ws)
+    right_lines = _tape_to_lines(right, ignore_ansi=args.ignore_ansi, collapse=args.collapse_ws)
+
+    diff = list(
+        difflib.unified_diff(
+            left_lines,
+            right_lines,
+            fromfile=str(left_path),
+            tofile=str(right_path),
+            lineterm="",
+        )
+    )
+
+    if not diff:
+        print("Tapes are equivalent after normalization.")
+        return 0
+
+    for line in diff:
+        print(line)
     return 0
 
 
@@ -610,7 +708,12 @@ def main():
     replay_parent.add_argument("--timeout", type=int, default=30, help="Session timeout")
     replay_parent.add_argument("--latency", help="Latency override (ms or min,max)")
     replay_parent.add_argument("--error-rate", type=float, default=0.0, help="Error injection rate")
-    replay_parent.add_argument("--summary", action="store_true", help="Print tape summary on exit")
+    replay_parent.add_argument(
+        "--summary",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Toggle exit summary reporting",
+    )
 
     rec_parser = subparsers.add_parser("rec", parents=[replay_parent], help="Record a live session")
     rec_parser.add_argument("--record", choices=list(_RECORD_CHOICES.keys()), default="new")
@@ -644,6 +747,23 @@ def main():
     tapes_redact_parser = tapes_subparsers.add_parser("redact", parents=[tapes_parent], help="Redact secrets from tapes")
     tapes_redact_parser.add_argument("--inplace", action="store_true", help="Rewrite tapes with redactions applied")
     tapes_redact_parser.set_defaults(func=cmd_tapes_redact)
+
+    tapes_diff_parser = tapes_subparsers.add_parser("diff", parents=[tapes_parent], help="Diff two tapes with normalization")
+    tapes_diff_parser.add_argument("left", help="Left tape relative path")
+    tapes_diff_parser.add_argument("right", help="Right tape relative path")
+    tapes_diff_parser.add_argument(
+        "--ignore-ansi",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Strip ANSI escape sequences before comparison",
+    )
+    tapes_diff_parser.add_argument(
+        "--collapse-ws",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Collapse whitespace when comparing outputs",
+    )
+    tapes_diff_parser.set_defaults(func=cmd_tapes_diff)
 
     # config command
     config_parser = subparsers.add_parser("config", help="Manage program configurations")

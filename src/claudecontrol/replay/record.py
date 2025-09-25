@@ -103,7 +103,7 @@ class Recorder:
         self._builder = self.session._key_builder
         # Prime the store for lookups so record modes can act deterministically.
         self._store.load_all()
-        self._index: Dict[Tuple, Tuple[int, int]] = self._store.build_index(self._builder)
+        self._index: Dict[Tuple, List[Tuple[int, int]]] = self._store.build_index(self._builder)
 
     # ------------------------------------------------------------------ setup
     def start(self) -> None:
@@ -210,13 +210,13 @@ class Recorder:
         for ctx, exchange in self._pending:
             stdin = _input_to_bytes(exchange.input)
             key = self._builder.context_key(ctx, stdin)
-            match = self._index.get(key)
-            if match is None:
+            matches = self._index.get(key)
+            if not matches:
                 new_exchanges.append((ctx, exchange))
                 continue
             if self.mode == RecordMode.NEW:
                 continue
-            tape_idx, exchange_idx = match
+            tape_idx, exchange_idx = matches[0]
             replacements.setdefault(tape_idx, []).append((exchange_idx, exchange))
 
         for tape_idx, pairs in replacements.items():
