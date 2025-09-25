@@ -495,7 +495,7 @@ pip install -e .
     "expect_sequences": [
         {"pattern": "Server running at", "response": null}
     ],
-    "success_indicators": ["✓", "Server running"],
+    "success_indicators": ["", "Server running"],
     "ready_indicators": ["Listening on"],
     "notes": "Development server with hot reload",
     "sample_output": ["Server running at http://localhost:3000"]

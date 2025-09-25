@@ -61,7 +61,7 @@ Session(
 ### Core Methods
 - `send(text: str, delay: float = 0) -> None`: Sends raw input. When replay is active, resolves the exchange against tapes and either streams recorded output or proxies to a live child on misses (per fallback). Live sessions optionally record the exchange and can simulate slow typing via `delay`.【F:src/claudecontrol/core.py†L320-L372】
 - `sendline(line: str = "") -> None`: Convenience wrapper adding a newline; records exchanges when live sessions are capturing.【F:src/claudecontrol/core.py†L374-L383】
-- `expect(patterns, timeout=None, searchwindowsize=None) -> int`: Waits for regex patterns. Works against both live `pexpect` children and the replay transport. Records exchange completions, captures exit codes, and retries intelligently on timeouts before raising `TimeoutError`.【F:src/claudecontrol/core.py†L385-L479】
+- `expect(patterns, timeout=None, searchwindowsize=None) -> int`: Waits for regex patterns. Works against both live `pexpect` children and the replay transport. Records exchange completions, captures exit codes, and retries automatically on timeouts before raising `TimeoutError`.【F:src/claudecontrol/core.py†L385-L479】
 - `expect_exact(patterns, timeout=None) -> int`: Exact-string variant delegating to `pexpect.expect_exact` or replay search; returns matched index.【F:src/claudecontrol/core.py†L481-L527】
 - `get_recent_output(lines: int = 100) -> str` and `get_full_output() -> str`: Read buffered output maintained via `_OutputCapture` (used for both logging and recording).【F:src/claudecontrol/core.py†L118-L188】【F:src/claudecontrol/core.py†L528-L589】
 - `is_alive() -> bool`: Indicates whether the underlying transport is active, handling both live and replay children.【F:src/claudecontrol/core.py†L544-L589】

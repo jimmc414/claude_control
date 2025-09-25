@@ -110,12 +110,12 @@ After analyzing the codebase, I understand that `claude_control` is a Python lib
 - Documentation for limitations (curses apps, Windows PTY)
 
 ## Success Criteria
-✓ Record sqlite3 session and replay byte-for-byte
-✓ Modes behave as specified (NEW, OVERWRITE, DISABLED)
-✓ Matchers and decorators programmable via API and CLI
-✓ Latency and error injection work as configured
-✓ Exit summary reports new/unused tapes
-✓ All existing tests continue to pass
+ Record sqlite3 session and replay byte-for-byte
+ Modes behave as specified (NEW, OVERWRITE, DISABLED)
+ Matchers and decorators programmable via API and CLI
+ Latency and error injection work as configured
+ Exit summary reports new/unused tapes
+ All existing tests continue to pass
 
 ## File-by-File Implementation Details
 

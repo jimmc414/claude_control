@@ -22,7 +22,7 @@
 
 ## Critical Paths Testing
 
-### Well-Tested Critical Paths ✅
+### Well-Tested Critical Paths 
 
 #### Session Lifecycle & Transport Management
 - **Test Files:** `test_core.py`, `test_integration.py`, `test_session_replay_mode.py`
@@ -99,7 +99,7 @@
 - **Test Data:** Mix of fast/slow commands, failing commands
 - **Quality:** Good - tests concurrency edge cases
 
-### Partially Tested Paths ⚠️
+### Partially Tested Paths 
 
 #### Program Investigation
 - **Test Files:** `test_investigate.py`
@@ -143,7 +143,7 @@
   - Error propagation for malformed JSON5 configs
 - **Why:** Requires multi-version config fixtures and CLI end-to-end harness
 
-### Untested or Low Coverage Paths ❌
+### Untested or Low Coverage Paths 
 
 #### Latency & Error Injection Policies
 - **Coverage:** 35%
@@ -194,7 +194,7 @@
 
 ## Test Quality Metrics
 
-### High-Quality Test Examples ✅
+### High-Quality Test Examples 
 
 **`test_session_timeout_includes_output`**
 ```python
@@ -232,7 +232,7 @@
 # - Uses fixtures with multiple tape variants
 ```
 
-### Medium-Quality Test Examples ⚠️
+### Medium-Quality Test Examples 
 
 **`test_investigation_basic`**
 ```python
@@ -261,7 +261,7 @@
 # - Missing assertions on telemetry/summary output
 ```
 
-### Low-Quality Test Examples ❌
+### Low-Quality Test Examples 
 
 **`test_exception_creation`**
 ```python
@@ -281,7 +281,7 @@
 
 ## Edge Cases & Error Handling
 
-### Well-Covered Edge Cases ✅
+### Well-Covered Edge Cases 
 - Empty output from process
 - Very long output lines (>10k chars)
 - Binary/non-UTF8 output
@@ -293,7 +293,7 @@
 - Tape overwrite collisions
 - Tape summary accounting for reused exchanges
 
-### Missing Edge Cases ❌
+### Missing Edge Cases 
 - Unicode in prompts (emoji prompts)
 - Very slow process startup (>30s)
 - Extremely large output (>1GB)
@@ -309,15 +309,15 @@
 
 | Scenario | Tested | Method | Threshold | Status |
 |----------|--------|--------|-----------|--------|
-| Session Creation | ✅ | Timed in tests | <200ms | Pass |
-| Pattern Matching | ✅ | 37 patterns test | <1ms per pattern | Pass |
-| Large Output Handling | ⚠️ | 10k lines test | <1s | Partial |
-| Parallel Execution | ✅ | 10 concurrent | No deadlock | Pass |
-| Memory Usage | ❌ | Not tested | - | Missing |
-| Registry Lookup | ✅ | 20 sessions | <1ms | Pass |
-| Investigation Time | ⚠️ | Simple programs | <10s | Partial |
-| Tape Playback Latency | ⚠️ | Synthetic delays | Config <= 50ms | Partial |
-| Tape Index Reload | ✅ | Store reload tests | <500ms for 100 tapes | Pass |
+| Session Creation | Yes | Timed in tests | <200ms | Pass |
+| Pattern Matching | Yes | 37 patterns test | <1ms per pattern | Pass |
+| Large Output Handling | Partial | 10k lines test | <1s | Partial |
+| Parallel Execution | Yes | 10 concurrent | No deadlock | Pass |
+| Memory Usage | No | Not tested | - | Missing |
+| Registry Lookup | Yes | 20 sessions | <1ms | Pass |
+| Investigation Time | Partial | Simple programs | <10s | Partial |
+| Tape Playback Latency | Partial | Synthetic delays | Config <= 50ms | Partial |
+| Tape Index Reload | Yes | Store reload tests | <500ms for 100 tapes | Pass |
 
 ## Test Data Strategy
 
@@ -401,7 +401,7 @@ pytest tests/test_core.py::test_session_timeout -v -s
 
 ## Coverage Gaps & Risk Assessment
 
-### High Risk, Low Coverage 🔴
+### High Risk, Low Coverage 
 
 1. **Named Pipe Streaming** - 45% coverage
    - Risk: Data loss, reader lockup
@@ -418,7 +418,7 @@ pytest tests/test_core.py::test_session_timeout -v -s
    - Missing: Deterministic latency mocks, probabilistic error surfaces
    - Recommendation: Introduce time-freezing harness and seeded RNG assertions
 
-### Medium Risk, Medium Coverage 🟡
+### Medium Risk, Medium Coverage 
 
 1. **Fuzz Testing** - 65% coverage
    - Risk: Missing crash detection
@@ -435,7 +435,7 @@ pytest tests/test_core.py::test_session_timeout -v -s
    - Missing: Multi-command scripts, config overrides, failure modes
    - Recommendation: Expand CLI E2E tests with tape fixtures
 
-### Low Risk, Low Coverage 🟢
+### Low Risk, Low Coverage 
 
 1. **Interactive Menu** - 40% coverage
    - Risk: User experience only
