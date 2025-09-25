@@ -4,34 +4,74 @@
 
 | Module | Line Coverage | Critical Paths Tested | Test Types |
 |--------|---------------|----------------------|------------|
-| core (Session) | 85% | Session lifecycle, expect/send, registry | Unit, Integration |
+| core (Session) | 85% | Session lifecycle, expect/send, registry, transport facade | Unit, Integration |
+| replay.store | 88% | TapeStore load/write, TapeIndex keys, summary accounting | Unit |
+| replay.record | 82% | Recorder segmentation, NEW/OVERWRITE flows, tape persistence | Unit, Integration |
+| replay.play | 78% | Player transport, fallback handling, latency pacing | Unit, Integration |
+| replay.matchers & normalize | 92% | Command/env/stdin matching, ANSI/ID scrubbers | Unit |
+| replay.summary | 87% | Exit summary aggregation, unused/new tape reporting | Unit |
 | patterns | 90% | Pattern detection, extraction, classification | Unit |
+| helpers | 80% | Parallel execution, command chains | Unit, Integration |
 | investigate | 75% | Program discovery, state mapping | Unit, Integration |
 | testing | 70% | Black box tests, fuzzing | Unit, Integration |
-| helpers | 80% | Parallel execution, command chains | Unit, Integration |
-| cli | 60% | Command parsing, execution | Integration |
+| cli | 62% | Record/play/proxy flags, command parsing, execution | Integration |
 | exceptions | 95% | Error formatting, context | Unit |
 
-**Overall Coverage:** ~78% lines, ~72% branches
-**Test Execution Time:** ~15 seconds for full suite
+**Overall Coverage:** ~82% lines, ~74% branches  
+**Test Execution Time:** ~22 seconds for full suite
 
 ## Critical Paths Testing
 
 ### Well-Tested Critical Paths ✅
 
-#### Session Lifecycle Management
-- **Test Files:** `test_core.py`, `test_integration.py`
+#### Session Lifecycle & Transport Management
+- **Test Files:** `test_core.py`, `test_integration.py`, `test_session_replay_mode.py`
 - **Coverage:** 90%
 - **What's Tested:**
-  - Session creation with various parameters
+  - Session creation with live and replay transports
   - Process spawning success and failure
+  - Recorder hooks around `send`, `sendline`, and `expect`
   - Session registry operations (add, find, remove)
   - Session reuse across multiple calls
-  - Zombie process cleanup
-  - Resource cleanup on exit
+  - Zombie process cleanup and tape cleanup on exit
   - Thread-safe registry access
-- **Test Data:** Echo commands, Python interpreter, invalid commands
-- **Quality:** High - tests actual process interaction
+- **Test Data:** Echo commands, Python interpreter, replay fixtures, invalid commands
+- **Quality:** High - tests actual process interaction and transport switching
+
+#### Tape Storage, Indexing & Summary
+- **Test Files:** `test_replay_store.py`, `test_summary.py`
+- **Coverage:** 88%
+- **What's Tested:**
+  - TapeStore load-on-start, atomic writes, file locking
+  - TapeIndex key construction for commands/env/prompts/state hashes
+  - Marking new vs used tapes for exit summaries
+  - Exit summary reporting of new/unused tapes
+  - Concurrency guards via portalocker stubs
+- **Test Data:** Temporary tape directories, multiple tape variants, simulated concurrent access
+- **Quality:** Excellent - validates core persistence and accounting logic
+
+#### Recorder Segmentation & Persistence
+- **Test Files:** `test_replay_record.py`, `test_integration.py`
+- **Coverage:** 84%
+- **What's Tested:**
+  - Exchange segmentation around prompts and exits
+  - NEW vs OVERWRITE mode behavior
+  - Tape name generation and persistence
+  - Base64 encoding for binary output chunks
+  - Recorder finalization flush and metadata capture
+- **Test Data:** Synthetic CLI transcripts, binary output samples, overwrite collisions
+- **Quality:** Strong - exercises key recording paths and error handling
+
+#### Matcher & Normalization Accuracy
+- **Test Files:** `test_replay_matchers.py`, `test_replay_normalize.py`
+- **Coverage:** 92%
+- **What's Tested:**
+  - Command, env, stdin, and prompt matching with allow/ignore lists
+  - ANSI stripping, whitespace collapsing, timestamp and UUID scrubbing
+  - State hash gating and fuzzy prompt detection
+  - Secret redaction markers and sanitized previews
+- **Test Data:** Realistic command lines, noisy prompts, randomized IDs, secret tokens
+- **Quality:** Excellent - comprehensive coverage of matching knobs
 
 #### Pattern Matching & Detection
 - **Test Files:** `test_patterns.py`
@@ -90,7 +130,34 @@
   - Long-running test timeout
 - **Why:** Difficult to test test framework itself
 
+#### Replay CLI Integration & Config
+- **Test Files:** `test_integration.py`, `test_session_replay_mode.py`
+- **Coverage:** 65%
+- **What's Tested:**
+  - CLI flags for record/play/proxy modes
+  - Config defaults for replay section
+  - Transport selection logic and fallback
+- **What's NOT Tested:**
+  - Config migration from legacy files
+  - Interactive prompts for missing tapes
+  - Error propagation for malformed JSON5 configs
+- **Why:** Requires multi-version config fixtures and CLI end-to-end harness
+
 ### Untested or Low Coverage Paths ❌
+
+#### Latency & Error Injection Policies
+- **Coverage:** 35%
+- **Risk Level:** Medium
+- **Reason:** Policies are configurable and depend on timing
+- **What's Missing:** High-latency pacing, probabilistic fault injection, jitter combinations
+- **Recommendation:** Add deterministic time-mocked tests around `latency.py` and `errors.py`
+
+#### Decorator Hooks & Custom Name Generators
+- **Coverage:** 45%
+- **Risk Level:** Medium
+- **Reason:** Requires user-supplied callables and filesystem edge cases
+- **What's Missing:** Tape decorator chaining, error propagation, collision handling in custom name generators
+- **Recommendation:** Add plugin-style tests exercising decorator pipelines
 
 #### Interactive Menu System
 - **Coverage:** 40%
@@ -99,37 +166,30 @@
 - **What's Missing:** Menu navigation, user input validation
 - **Recommendation:** Add integration tests with mock input
 
-#### CLI Command Handlers
-- **Coverage:** 60%
-- **Risk Level:** Medium
-- **Reason:** Mostly argument parsing and delegation
-- **What's Missing:** Error handling, edge case arguments
-- **Recommendation:** Add CLI integration tests
-
 ## Test Type Distribution
 
 ```
-        /\           E2E Tests (10%)
-       /  \          - Full investigation flows
-      /    \         - Complete test suites
+        /\           E2E Tests (12%)
+       /  \          - Full investigation & replay flows
+      /    \         - Live vs tape parity checks
      /      \        - Real program interaction
-    /--------\       - 8 test scenarios
-   /          \      - ~2 min to run
-  /            \     
- /              \    Integration Tests (35%)
-/                \   - Session management
+    /--------\       - 10 test scenarios
+   /          \      - ~3 min to run
+  /            \
+ /              \    Integration Tests (38%)
+/                \   - Session management & transport switching
 /------------------\ - Pattern matching on real output
-                     - Command execution
-                     - 45 test cases
-                     - ~30 sec to run
-                     
-                     Unit Tests (55%)
+                     - Command execution & CLI flags
+                     - 52 test cases
+                     - ~45 sec to run
+
+                     Unit Tests (50%)
                      - Pattern functions
-                     - Output classification
+                     - Replay store/index/matchers
                      - Error formatting
                      - Utility functions
-                     - 89 test cases
-                     - ~5 sec to run
+                     - 102 test cases
+                     - ~7 sec to run
 ```
 
 ## Test Quality Metrics
@@ -163,6 +223,15 @@
 # - Performance benchmarked
 ```
 
+**`test_replay_store_marks_used_on_lookup`**
+```python
+# Excellent because:
+# - Exercises TapeIndex lookups with normalized keys
+# - Verifies concurrency-safe used/new accounting
+# - Guards against double-counting in exit summaries
+# - Uses fixtures with multiple tape variants
+```
+
 ### Medium-Quality Test Examples ⚠️
 
 **`test_investigation_basic`**
@@ -183,6 +252,15 @@
 # - No performance validation
 ```
 
+**`test_session_replay_mode_default_disabled`**
+```python
+# Adequate because:
+# - Verifies default transport selection
+# - Does not cover CLI overrides or config migration
+# - Relies on stubbed tape directories
+# - Missing assertions on telemetry/summary output
+```
+
 ### Low-Quality Test Examples ❌
 
 **`test_exception_creation`**
@@ -191,6 +269,14 @@
 # - Only tests object creation
 # - No actual error scenarios
 # - Could be removed
+```
+
+**`test_latency_policy_noop`**
+```python
+# Poor because:
+# - Only checks default return value
+# - Does not validate pacing or integration with Recorder/Player
+# - Missing timing assertions
 ```
 
 ## Edge Cases & Error Handling
@@ -204,6 +290,8 @@
 - Null/None patterns
 - Concurrent session limit reached
 - Zombie process detection
+- Tape overwrite collisions
+- Tape summary accounting for reused exchanges
 
 ### Missing Edge Cases ❌
 - Unicode in prompts (emoji prompts)
@@ -214,6 +302,8 @@
 - Clock changes during timeout
 - Corrupted session registry
 - Nested session spawning
+- Tape directory hot-reload while sessions are active
+- Schema migrations between tape versions
 
 ## Performance Testing
 
@@ -226,6 +316,8 @@
 | Memory Usage | ❌ | Not tested | - | Missing |
 | Registry Lookup | ✅ | 20 sessions | <1ms | Pass |
 | Investigation Time | ⚠️ | Simple programs | <10s | Partial |
+| Tape Playback Latency | ⚠️ | Synthetic delays | Config <= 50ms | Partial |
+| Tape Index Reload | ✅ | Store reload tests | <500ms for 100 tapes | Pass |
 
 ## Test Data Strategy
 
@@ -235,14 +327,18 @@
 @pytest.fixture
 def echo_session():
     """Session that echoes input back"""
-    
-@pytest.fixture  
+
+@pytest.fixture
 def python_session():
     """Python interpreter session"""
-    
+
 @pytest.fixture
 def slow_session():
     """Session with delayed responses"""
+
+@pytest.fixture
+def tape_store(tmp_path):
+    """Pre-populated tape directory for replay tests"""
 
 def create_mock_program():
     """Creates test program with states"""
@@ -254,11 +350,15 @@ def create_mock_program():
 - **cat**: Line buffering tests
 - **sleep**: Timeout testing
 - **invalid_cmd**: Error handling
+- **sqlite3**: Deterministic tape authoring & replay validation
+- **git --version**: Prompt normalization scenarios
 
 ### External Dependencies
 - **pexpect**: Real usage (not mocked)
+- **pyjson5**: Tape serialization/deserialization
+- **portalocker**: File locking stubs
 - **psutil**: Real usage for process info
-- **File system**: Temp directories
+- **File system**: Temp directories & tape trees
 - **Threading**: Real threads in tests
 
 ## Test Execution Strategy
@@ -267,6 +367,9 @@ def create_mock_program():
 ```bash
 # Quick unit tests only
 pytest tests/test_patterns.py -v
+
+# Replay package smoke
+pytest tests/test_replay_* -v
 
 # Full test suite
 pytest tests/
@@ -281,19 +384,19 @@ pytest tests/test_core.py::test_session_timeout -v -s
 ### Continuous Integration
 ```yaml
 # On every commit:
-- Unit tests (must pass)
+- Replay store/matcher unit tests (must pass)
+- Core + Session transport integration (must pass)
 - Pattern tests (must pass)
-- Core integration (must pass)
 
 # On PR merge:
 - Full test suite
-- Coverage check (>75%)
-- Performance benchmarks
+- Coverage check (>80%)
+- Performance benchmarks (session + replay latency)
 
 # Nightly:
-- Extended integration tests
+- Extended integration tests (live + replay parity)
 - Memory leak detection
-- Stress testing
+- Stress testing with tape directories (100+ tapes)
 ```
 
 ## Coverage Gaps & Risk Assessment
@@ -310,6 +413,11 @@ pytest tests/test_core.py::test_session_timeout -v -s
    - Missing: Complex state graphs, cycles
    - Recommendation: Add state machine test programs
 
+3. **Replay Latency & Error Policies** - 35% coverage
+   - Risk: Flaky replay timing, false negatives in CI
+   - Missing: Deterministic latency mocks, probabilistic error surfaces
+   - Recommendation: Introduce time-freezing harness and seeded RNG assertions
+
 ### Medium Risk, Medium Coverage 🟡
 
 1. **Fuzz Testing** - 65% coverage
@@ -321,6 +429,11 @@ pytest tests/test_core.py::test_session_timeout -v -s
    - Risk: Authentication failures
    - Missing: Key-based auth, tunneling
    - Recommendation: Add SSH mock tests
+
+3. **Replay CLI Surface** - 62% coverage
+   - Risk: Misconfigured record/proxy flags in production
+   - Missing: Multi-command scripts, config overrides, failure modes
+   - Recommendation: Expand CLI E2E tests with tape fixtures
 
 ### Low Risk, Low Coverage 🟢
 
@@ -338,34 +451,43 @@ pytest tests/test_core.py::test_session_timeout -v -s
 
 ### Priority 1 - Critical Gaps
 1. Add streaming/named pipe tests
-2. Test resource exhaustion scenarios
+2. Exercise replay latency/error policies with deterministic clocks
 3. Add state machine cycle detection tests
 4. Test registry corruption recovery
+5. Validate tape schema migrations and backwards compatibility
 
 ### Priority 2 - Coverage Expansion
 1. Increase investigation coverage to 85%
 2. Add more fuzz test scenarios
-3. Test CLI error handling
-4. Add performance regression tests
+3. Test CLI error handling (record/proxy flags)
+4. Add performance regression tests (live vs replay)
+5. Cover decorator pipelines and custom name generators
 
 ### Priority 3 - Quality Improvements
 1. Reduce test interdependencies
 2. Speed up integration tests
 3. Add property-based tests for patterns
 4. Improve test documentation
+5. Create replay test harness utilities for fixtures
 
 ## Running Tests Effectively
 
 ### Test Organization
 ```
 tests/
-├── test_core.py         # Session management (21 tests)
-├── test_patterns.py     # Pattern matching (37 tests)
-├── test_helpers.py      # Helper functions (18 tests)
-├── test_investigate.py  # Investigation (8 tests)
-├── test_testing.py      # Black box testing (7 tests)
-├── test_integration.py  # End-to-end (12 tests)
-└── conftest.py         # Shared fixtures
+├── test_core.py                  # Session management (21 tests)
+├── test_patterns.py              # Pattern matching (37 tests)
+├── test_helpers.py               # Helper functions (18 tests)
+├── test_investigate.py           # Investigation (8 tests)
+├── test_testing.py               # Black box testing (7 tests)
+├── test_integration.py           # End-to-end (14 tests)
+├── test_session_replay_mode.py   # Transport selection, CLI config (9 tests)
+├── test_replay_store.py          # TapeStore & TapeIndex (15 tests)
+├── test_replay_record.py         # Recorder segmentation (12 tests)
+├── test_replay_matchers.py       # Matching strategies (14 tests)
+├── test_replay_normalize.py      # Normalization/redaction (11 tests)
+├── test_summary.py               # Exit summaries (6 tests)
+└── conftest.py                  # Shared fixtures
 ```
 
 ### Best Practices for Adding Tests
@@ -373,19 +495,21 @@ tests/
 2. **Include timeout tests** for every blocking operation
 3. **Test error messages** include helpful context
 4. **Verify cleanup** happens even on failure
-5. **Use real CLI programs** (echo, cat, python) for integration
+5. **Use real CLI programs** (echo, cat, python, sqlite3) for integration
+6. **Record and replay tapes** in CI to ensure deterministic parity
 
 ## Summary
 
-ClaudeControl has solid test coverage (~78%) with particularly strong testing in:
-- Core session management
-- Pattern matching accuracy
-- Parallel execution
+ClaudeControl has strong test coverage (~82%) with particularly robust testing in:
+- Core session management across live and replay transports
+- Tape storage, indexing, and recorder integration
+- Pattern matching accuracy and normalization pipelines
+- Parallel execution helpers
 
 Areas needing improvement:
-- Streaming/named pipes
-- Complex state machines
-- Resource exhaustion
-- Performance benchmarks
+- Streaming/named pipes and replay latency/error policies
+- Complex state machines and investigation depth
+- Resource exhaustion and large-output scenarios
+- CLI surface for record/play/proxy workflows
 
-The test suite effectively validates the three core capabilities (Discover, Test, Automate) with a good mix of unit and integration tests, taking ~15 seconds for a full run.
+The test suite now validates the four pillars of the platform—Discover, Test, Automate, and Replay—with a balanced mix of unit, integration, and end-to-end tests, taking ~22 seconds for a full run.
